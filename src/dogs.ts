@@ -1,0 +1,314 @@
+/**
+ * Procedural low-poly dogs that wander the arena.
+ * Body is built from primitives; legs and tail animate via a simple walk
+ * cycle phase. Each dog picks a random destination, walks to it, then
+ * picks another. Cheap and self-contained.
+ */
+
+import * as THREE from 'three';
+import { getTerrainHeight } from './terrain';
+import { Holdable, HoldableProvider } from './holdable';
+
+const WALK_SPEED = 1.6;
+const TURN_RATE = 2.4;          // radians/sec toward target heading
+const REACH_RADIUS = 1.2;       // how close before picking a new spot
+const PAUSE_CHANCE = 0.25;      // chance to idle after reaching a spot
+const PAUSE_TIME = [1.5, 4.0];
+
+const PALETTE = [
+  { body: 0x8b6f47, belly: 0xc9a47a }, // tan
+  { body: 0x4a3b2a, belly: 0x6b5742 }, // dark brown
+  { body: 0xd9d2c5, belly: 0xf2ede3 }, // cream
+  { body: 0x2d2d2d, belly: 0x444444 }, // black
+  { body: 0xa37856, belly: 0xd1a47e }  // chestnut
+];
+
+interface DogParts {
+  group: THREE.Group;
+  legs: { mesh: THREE.Mesh; phase: number }[];
+  tail: THREE.Object3D;
+  head: THREE.Object3D;
+  body: THREE.Object3D;
+}
+
+interface Dog {
+  parts: DogParts;
+  pos: THREE.Vector3;
+  yaw: number;
+  target: THREE.Vector3;
+  pauseTimer: number;     // > 0 means idling
+  walkPhase: number;
+  bounds: number;
+  heightData: Uint8Array | null;
+  held: boolean;
+}
+
+function buildDogMesh(): DogParts {
+  const palette = PALETTE[Math.floor(Math.random() * PALETTE.length)];
+  const bodyMat = new THREE.MeshStandardMaterial({ color: palette.body, roughness: 0.85, metalness: 0.0 });
+  const bellyMat = new THREE.MeshStandardMaterial({ color: palette.belly, roughness: 0.85, metalness: 0.0 });
+  const noseMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.6 });
+
+  const group = new THREE.Group();
+  group.name = 'Dog';
+
+  // Body — stretched box
+  const bodyGeo = new THREE.BoxGeometry(0.5, 0.45, 0.95);
+  const body = new THREE.Mesh(bodyGeo, bodyMat);
+  body.position.y = 0.55;
+  body.castShadow = true;
+  group.add(body);
+
+  // Belly underside, slightly lighter
+  const bellyGeo = new THREE.BoxGeometry(0.48, 0.18, 0.85);
+  const belly = new THREE.Mesh(bellyGeo, bellyMat);
+  belly.position.set(0, 0.4, 0);
+  group.add(belly);
+
+  // Neck + head pivot at front of body
+  const headPivot = new THREE.Group();
+  headPivot.position.set(0, 0.7, 0.5);
+  group.add(headPivot);
+
+  const neckGeo = new THREE.BoxGeometry(0.32, 0.32, 0.28);
+  const neck = new THREE.Mesh(neckGeo, bodyMat);
+  neck.position.set(0, -0.05, 0.05);
+  neck.castShadow = true;
+  headPivot.add(neck);
+
+  const headGeo = new THREE.BoxGeometry(0.36, 0.34, 0.42);
+  const head = new THREE.Mesh(headGeo, bodyMat);
+  head.position.set(0, 0.05, 0.32);
+  head.castShadow = true;
+  headPivot.add(head);
+
+  // Snout
+  const snoutGeo = new THREE.BoxGeometry(0.22, 0.18, 0.22);
+  const snout = new THREE.Mesh(snoutGeo, bellyMat);
+  snout.position.set(0, -0.04, 0.55);
+  headPivot.add(snout);
+
+  const noseGeo = new THREE.BoxGeometry(0.1, 0.08, 0.06);
+  const nose = new THREE.Mesh(noseGeo, noseMat);
+  nose.position.set(0, -0.02, 0.69);
+  headPivot.add(nose);
+
+  // Ears
+  const earGeo = new THREE.BoxGeometry(0.08, 0.18, 0.14);
+  const earL = new THREE.Mesh(earGeo, bodyMat);
+  earL.position.set(-0.13, 0.22, 0.22);
+  earL.rotation.z = 0.2;
+  headPivot.add(earL);
+  const earR = earL.clone();
+  earR.position.x = 0.13;
+  earR.rotation.z = -0.2;
+  headPivot.add(earR);
+
+  // Tail pivot at back
+  const tailPivot = new THREE.Group();
+  tailPivot.position.set(0, 0.68, -0.5);
+  tailPivot.rotation.x = -0.5;
+  group.add(tailPivot);
+
+  const tailGeo = new THREE.BoxGeometry(0.1, 0.1, 0.4);
+  const tail = new THREE.Mesh(tailGeo, bodyMat);
+  tail.position.z = -0.2;
+  tail.castShadow = true;
+  tailPivot.add(tail);
+
+  // Legs — pivoted at hip so we can swing them
+  const legs: DogParts['legs'] = [];
+  const legPositions: [number, number, number, number][] = [
+    // [x, z, phase, isFront]
+    [-0.18, 0.38, 0, 1],   // front-left
+    [0.18, 0.38, Math.PI, 1], // front-right
+    [-0.18, -0.38, Math.PI, 0], // back-left
+    [0.18, -0.38, 0, 0]      // back-right
+  ];
+  for (const [x, z, phase] of legPositions) {
+    const pivot = new THREE.Group();
+    pivot.position.set(x, 0.45, z);
+    group.add(pivot);
+
+    const legGeo = new THREE.BoxGeometry(0.12, 0.45, 0.12);
+    const leg = new THREE.Mesh(legGeo, bodyMat);
+    leg.position.y = -0.22;
+    leg.castShadow = true;
+    pivot.add(leg);
+
+    const pawGeo = new THREE.BoxGeometry(0.14, 0.08, 0.18);
+    const paw = new THREE.Mesh(pawGeo, noseMat);
+    paw.position.y = -0.43;
+    pivot.add(paw);
+
+    legs.push({ mesh: pivot as unknown as THREE.Mesh, phase });
+  }
+
+  return { group, legs, tail: tailPivot, head: headPivot, body };
+}
+
+function pickTarget(bounds: number): THREE.Vector3 {
+  const r = bounds * 0.85;
+  return new THREE.Vector3(
+    (Math.random() * 2 - 1) * r,
+    0,
+    (Math.random() * 2 - 1) * r
+  );
+}
+
+export class DogPack implements HoldableProvider {
+  private dogs: Dog[] = [];
+  private group: THREE.Group;
+  private bounds: number;
+  private heightData: Uint8Array | null;
+
+  constructor(scene: THREE.Scene, count: number, bounds: number, heightData: Uint8Array | null) {
+    this.bounds = bounds;
+    this.heightData = heightData;
+    this.group = new THREE.Group();
+    this.group.name = 'DogPack';
+    scene.add(this.group);
+
+    for (let i = 0; i < count; i++) {
+      this.spawnDog();
+    }
+  }
+
+  private spawnDog(): void {
+    const parts = buildDogMesh();
+    const start = pickTarget(this.bounds);
+    const dog: Dog = {
+      parts,
+      pos: start.clone(),
+      yaw: Math.random() * Math.PI * 2,
+      target: pickTarget(this.bounds),
+      pauseTimer: 0,
+      walkPhase: Math.random() * Math.PI * 2,
+      bounds: this.bounds,
+      heightData: this.heightData,
+      held: false
+    };
+    parts.group.position.copy(start);
+    parts.group.rotation.y = dog.yaw;
+    this.group.add(parts.group);
+    this.dogs.push(dog);
+  }
+
+  update(delta: number): void {
+    for (const dog of this.dogs) {
+      if (dog.held) continue;
+      this.updateDog(dog, delta);
+    }
+  }
+
+  findNearestHoldable(pos: THREE.Vector3, maxDist: number): Holdable | null {
+    let best: Dog | null = null;
+    let bestSq = maxDist * maxDist;
+    for (const dog of this.dogs) {
+      if (dog.held) continue;
+      const dx = dog.pos.x - pos.x;
+      const dz = dog.pos.z - pos.z;
+      const d = dx * dx + dz * dz;
+      if (d < bestSq) { bestSq = d; best = dog; }
+    }
+    if (!best) return null;
+    return this.makeHoldable(best);
+  }
+
+  private makeHoldable(dog: Dog): Holdable {
+    return {
+      mesh: dog.parts.group,
+      get held() { return dog.held; },
+      set held(v: boolean) { dog.held = v; },
+      pickUp: () => { dog.held = true; },
+      releaseAt: (pos, yaw) => {
+        dog.held = false;
+        dog.pos.set(pos.x, 0, pos.z);
+        dog.yaw = yaw;
+        dog.target = pickTarget(dog.bounds);
+        dog.pauseTimer = 0.6 + Math.random() * 0.6;
+        // Reset limbs
+        for (const leg of dog.parts.legs) leg.mesh.rotation.x = 0;
+        dog.parts.body.position.y = 0.55;
+        dog.parts.head.rotation.x = 0;
+        dog.parts.tail.rotation.y = 0;
+      }
+    };
+  }
+
+  private updateDog(dog: Dog, delta: number): void {
+    const moving = dog.pauseTimer <= 0;
+
+    if (!moving) {
+      dog.pauseTimer -= delta;
+      // Idle tail wag, no movement
+      dog.parts.tail.rotation.y = Math.sin(performance.now() * 0.008) * 0.6;
+      // Settle legs
+      for (const leg of dog.parts.legs) leg.mesh.rotation.x *= 0.9;
+      this.applyTerrain(dog);
+      return;
+    }
+
+    // Steer toward target
+    const dx = dog.target.x - dog.pos.x;
+    const dz = dog.target.z - dog.pos.z;
+    const distSq = dx * dx + dz * dz;
+
+    if (distSq < REACH_RADIUS * REACH_RADIUS) {
+      // Arrived — maybe pause, then pick a new target
+      if (Math.random() < PAUSE_CHANCE) {
+        dog.pauseTimer = PAUSE_TIME[0] + Math.random() * (PAUSE_TIME[1] - PAUSE_TIME[0]);
+      }
+      dog.target = pickTarget(dog.bounds);
+      return;
+    }
+
+    const desiredYaw = Math.atan2(dx, dz);
+    let yawDiff = desiredYaw - dog.yaw;
+    // Wrap to [-PI, PI]
+    while (yawDiff > Math.PI) yawDiff -= Math.PI * 2;
+    while (yawDiff < -Math.PI) yawDiff += Math.PI * 2;
+    const turn = Math.max(-TURN_RATE * delta, Math.min(TURN_RATE * delta, yawDiff));
+    dog.yaw += turn;
+
+    // Move forward at WALK_SPEED, scaled down while sharply turning
+    const turnPenalty = 1 - Math.min(1, Math.abs(yawDiff) / Math.PI) * 0.6;
+    const speed = WALK_SPEED * turnPenalty;
+    dog.pos.x += Math.sin(dog.yaw) * speed * delta;
+    dog.pos.z += Math.cos(dog.yaw) * speed * delta;
+
+    // Soft arena bounds — pick a new target if drifting out
+    if (Math.abs(dog.pos.x) > dog.bounds || Math.abs(dog.pos.z) > dog.bounds) {
+      dog.pos.x = Math.max(-dog.bounds, Math.min(dog.bounds, dog.pos.x));
+      dog.pos.z = Math.max(-dog.bounds, Math.min(dog.bounds, dog.pos.z));
+      dog.target = pickTarget(dog.bounds);
+    }
+
+    // Walk cycle
+    dog.walkPhase += delta * 9 * turnPenalty;
+    const swing = Math.sin(dog.walkPhase) * 0.7;
+    const swingOpp = Math.sin(dog.walkPhase + Math.PI) * 0.7;
+    dog.parts.legs[0].mesh.rotation.x = swing;       // FL
+    dog.parts.legs[1].mesh.rotation.x = swingOpp;    // FR
+    dog.parts.legs[2].mesh.rotation.x = swingOpp;    // BL
+    dog.parts.legs[3].mesh.rotation.x = swing;       // BR
+
+    // Body bob
+    const bob = Math.abs(Math.sin(dog.walkPhase * 2)) * 0.04;
+    dog.parts.body.position.y = 0.55 + bob;
+
+    // Tail wag
+    dog.parts.tail.rotation.y = Math.sin(dog.walkPhase * 1.5) * 0.5;
+
+    // Head bob slightly
+    dog.parts.head.rotation.x = Math.sin(dog.walkPhase) * 0.08;
+
+    this.applyTerrain(dog);
+  }
+
+  private applyTerrain(dog: Dog): void {
+    const y = getTerrainHeight(dog.pos.x, dog.pos.z, dog.heightData);
+    dog.parts.group.position.set(dog.pos.x, y, dog.pos.z);
+    dog.parts.group.rotation.y = dog.yaw;
+  }
+}

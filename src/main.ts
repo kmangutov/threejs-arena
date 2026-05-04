@@ -29,6 +29,9 @@ import { NetworkGame, ConnectionState } from './net';
 import { SkyEnvironment } from './sky';
 import { JUMP_FORCE } from './shared/physics';
 import { DamageSplatSystem } from './damage-splat';
+import { DogPack } from './dogs';
+import { RabbitWarren } from './rabbits';
+import { Holdable } from './holdable';
 
 // ============================================================================
 // Character Factory
@@ -71,6 +74,10 @@ interface GameState {
   casts: CastSystem;
   projectiles: ProjectileSystem;
   damageSplats: DamageSplatSystem;
+  dogs: DogPack;
+  rabbits: RabbitWarren;
+  carrySlot: THREE.Group;
+  heldAnimal: Holdable | null;
   classSelectOpen: boolean;
 
   // CC cube visuals: entityId -> cube mesh
@@ -488,6 +495,75 @@ function spawnHeal(state: GameState, entityId: string, min: number, max: number)
   state.damageSplats.spawnHeal(entity, amount);
 }
 
+function togglePickup(state: GameState): void {
+  if (state.heldAnimal) {
+    releaseHeld(state);
+  } else {
+    tryPickup(state);
+  }
+}
+
+function tryPickup(state: GameState): void {
+  const playerPos = state.player.position;
+  const PICKUP_RANGE = 2.5;
+
+  // Check both providers, pick the closer one
+  const candidates: Holdable[] = [];
+  const dog = state.dogs.findNearestHoldable(playerPos, PICKUP_RANGE);
+  if (dog) candidates.push(dog);
+  const rabbit = state.rabbits.findNearestHoldable(playerPos, PICKUP_RANGE);
+  if (rabbit) candidates.push(rabbit);
+  if (!candidates.length) return;
+
+  let nearest = candidates[0];
+  let nearestSq = nearest.mesh.position.distanceToSquared(playerPos);
+  for (let i = 1; i < candidates.length; i++) {
+    const d = candidates[i].mesh.position.distanceToSquared(playerPos);
+    if (d < nearestSq) { nearest = candidates[i]; nearestSq = d; }
+  }
+
+  nearest.pickUp();
+  // Reparent to carry slot — Object3D.add() removes from current parent.
+  state.carrySlot.add(nearest.mesh);
+  // Animal sits cradled in front of the chest, slightly tilted up so its
+  // head faces the camera. Slot is in player-local space (front = -Z after
+  // rotating by player yaw), so push it forward in -Z and lift it.
+  nearest.mesh.position.set(0, 0.0, -0.4);
+  nearest.mesh.rotation.set(-0.25, 0, 0);
+  state.heldAnimal = nearest;
+}
+
+function updateCarrySlot(state: GameState): void {
+  // Place slot at chest height, oriented to face same way as player.
+  state.carrySlot.position.set(
+    state.player.position.x,
+    state.player.position.y + 1.1,
+    state.player.position.z
+  );
+  state.carrySlot.rotation.y = state.player.facingYaw;
+}
+
+function releaseHeld(state: GameState): void {
+  const held = state.heldAnimal;
+  if (!held) return;
+
+  // Drop it just in front of the player.
+  const forward = new THREE.Vector3(
+    -Math.sin(state.player.facingYaw),
+    0,
+    -Math.cos(state.player.facingYaw)
+  );
+  const dropPos = state.player.position.clone().add(forward.multiplyScalar(1.0));
+
+  // Reparent back to the scene root (same parent the pack groups live in).
+  state.scene.add(held.mesh);
+  held.mesh.position.set(dropPos.x, 0, dropPos.z);
+  held.mesh.rotation.set(0, state.player.facingYaw, 0);
+
+  held.releaseAt(dropPos, state.player.facingYaw);
+  state.heldAnimal = null;
+}
+
 function flashEntityHit(state: GameState, entityId: string): void {
   const entity = state.entities.get(entityId);
   if (!entity) return;
@@ -530,6 +606,9 @@ function setupInput(state: GameState): void {
     const key = e.key.toLowerCase();
     if (['1', '2', '3', 'q', 'e', 'r', 'f', 'g'].includes(key)) {
       tryUseAbility(state, key);
+    }
+    if (key === 'c') {
+      togglePickup(state);
     }
   });
 
@@ -692,6 +771,17 @@ async function init(): Promise<GameState> {
     casts,
     projectiles,
     damageSplats: new DamageSplatSystem(scene),
+    dogs: new DogPack(scene, 6, 18, getTerrainHeightData()),
+    rabbits: new RabbitWarren(scene, 10, 18, getTerrainHeightData()),
+    carrySlot: (() => {
+      const slot = new THREE.Group();
+      slot.name = 'CarrySlot';
+      // Top-level scene group; tracked to player each frame to avoid FBX
+      // scale issues (Mixamo character root is scaled 0.01).
+      scene.add(slot);
+      return slot;
+    })(),
+    heldAnimal: null,
     classSelectOpen: false,
     ccCubes: new Map(),
     mode,
@@ -796,6 +886,9 @@ function animateStandalone(state: GameState, delta: number): void {
   state.casts.update();
   state.projectiles.update(delta);
   state.damageSplats.update(delta);
+  state.dogs.update(delta);
+  state.rabbits.update(delta);
+  updateCarrySlot(state);
   updateAutoAttack(state, delta);
 
   // Update UI
@@ -859,6 +952,9 @@ function animateMultiplayer(state: GameState, delta: number): void {
   state.targeting.update(state.player.position);
 
   state.damageSplats.update(delta);
+  state.dogs.update(delta);
+  state.rabbits.update(delta);
+  updateCarrySlot(state);
 
   // Update remote entities from network state
   const remoteEntities = network.getRemoteEntities();

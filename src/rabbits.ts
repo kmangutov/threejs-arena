@@ -1,0 +1,360 @@
+/**
+ * Procedural low-poly rabbits. Smaller than dogs and they hop in short
+ * bursts: a quick forward leap, a brief landing pause, then sometimes
+ * stop entirely to look around before picking a new direction.
+ */
+
+import * as THREE from 'three';
+import { getTerrainHeight } from './terrain';
+import { Holdable, HoldableProvider } from './holdable';
+
+const HOP_SPEED = 2.6;          // peak forward speed during a hop
+const HOP_DURATION = 0.45;      // seconds of one hop arc
+const HOP_REST_RANGE = [0.2, 0.5];  // pause between hops while traveling
+const TURN_RATE = 4.5;
+const REACH_RADIUS = 0.8;
+const STOP_CHANCE = 0.45;       // chance to fully stop after reaching a spot
+const STOP_TIME = [1.5, 4.5];
+
+const PALETTE = [
+  { body: 0xeae3d2, belly: 0xfffaf0 }, // white
+  { body: 0x8a7458, belly: 0xd9c9af }, // brown
+  { body: 0x444240, belly: 0x6b6864 }, // gray
+  { body: 0xc9a87a, belly: 0xe8d5af }  // tan
+];
+
+interface RabbitParts {
+  group: THREE.Group;
+  body: THREE.Object3D;
+  head: THREE.Object3D;
+  earL: THREE.Object3D;
+  earR: THREE.Object3D;
+  legsBack: THREE.Object3D[];
+  legsFront: THREE.Object3D[];
+  tail: THREE.Object3D;
+}
+
+type RabbitState = 'hop' | 'rest' | 'stopped';
+
+interface Rabbit {
+  parts: RabbitParts;
+  pos: THREE.Vector3;
+  yaw: number;
+  target: THREE.Vector3;
+  state: RabbitState;
+  stateTimer: number;     // remaining time in current state
+  hopPhase: number;       // 0..1 within current hop
+  bounds: number;
+  heightData: Uint8Array | null;
+  held: boolean;
+}
+
+function buildRabbitMesh(): RabbitParts {
+  const palette = PALETTE[Math.floor(Math.random() * PALETTE.length)];
+  const bodyMat = new THREE.MeshStandardMaterial({ color: palette.body, roughness: 0.9, metalness: 0.0 });
+  const bellyMat = new THREE.MeshStandardMaterial({ color: palette.belly, roughness: 0.9, metalness: 0.0 });
+  const eyeMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.5 });
+  const noseMat = new THREE.MeshStandardMaterial({ color: 0xff8a9a, roughness: 0.7 });
+
+  const group = new THREE.Group();
+  group.name = 'Rabbit';
+
+  // Round-ish body (squashed sphere)
+  const bodyGeo = new THREE.SphereGeometry(0.22, 10, 8);
+  const body = new THREE.Mesh(bodyGeo, bodyMat);
+  body.scale.set(1.1, 0.9, 1.4);
+  body.position.y = 0.27;
+  body.castShadow = true;
+  group.add(body);
+
+  // Belly highlight
+  const bellyGeo = new THREE.SphereGeometry(0.18, 8, 6);
+  const belly = new THREE.Mesh(bellyGeo, bellyMat);
+  belly.scale.set(1.0, 0.5, 1.2);
+  belly.position.set(0, 0.18, 0);
+  group.add(belly);
+
+  // Head pivot at front
+  const headPivot = new THREE.Group();
+  headPivot.position.set(0, 0.34, 0.28);
+  group.add(headPivot);
+
+  const headGeo = new THREE.SphereGeometry(0.16, 10, 8);
+  const head = new THREE.Mesh(headGeo, bodyMat);
+  head.scale.set(1.0, 0.95, 1.05);
+  head.castShadow = true;
+  headPivot.add(head);
+
+  // Nose
+  const noseGeo = new THREE.SphereGeometry(0.025, 6, 6);
+  const nose = new THREE.Mesh(noseGeo, noseMat);
+  nose.position.set(0, -0.02, 0.16);
+  headPivot.add(nose);
+
+  // Eyes
+  const eyeGeo = new THREE.SphereGeometry(0.022, 6, 6);
+  const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
+  eyeL.position.set(-0.07, 0.04, 0.12);
+  headPivot.add(eyeL);
+  const eyeR = eyeL.clone();
+  eyeR.position.x = 0.07;
+  headPivot.add(eyeR);
+
+  // Long ears — pivoted at base so they can twitch
+  const earGeo = new THREE.BoxGeometry(0.05, 0.28, 0.07);
+  const earPivotL = new THREE.Group();
+  earPivotL.position.set(-0.07, 0.12, -0.02);
+  headPivot.add(earPivotL);
+  const earL = new THREE.Mesh(earGeo, bodyMat);
+  earL.position.y = 0.14;
+  earL.castShadow = true;
+  earPivotL.add(earL);
+  earPivotL.rotation.z = 0.1;
+
+  const earPivotR = new THREE.Group();
+  earPivotR.position.set(0.07, 0.12, -0.02);
+  headPivot.add(earPivotR);
+  const earR = new THREE.Mesh(earGeo, bodyMat);
+  earR.position.y = 0.14;
+  earR.castShadow = true;
+  earPivotR.add(earR);
+  earPivotR.rotation.z = -0.1;
+
+  // Tail — small fluffy ball
+  const tailGeo = new THREE.SphereGeometry(0.08, 8, 6);
+  const tail = new THREE.Mesh(tailGeo, bellyMat);
+  tail.position.set(0, 0.3, -0.32);
+  group.add(tail);
+
+  // Front legs (small, tucked)
+  const frontLegGeo = new THREE.BoxGeometry(0.07, 0.14, 0.08);
+  const legsFront: THREE.Object3D[] = [];
+  for (const x of [-0.1, 0.1]) {
+    const pivot = new THREE.Group();
+    pivot.position.set(x, 0.18, 0.18);
+    group.add(pivot);
+    const leg = new THREE.Mesh(frontLegGeo, bodyMat);
+    leg.position.y = -0.07;
+    leg.castShadow = true;
+    pivot.add(leg);
+    legsFront.push(pivot);
+  }
+
+  // Back legs (bigger, more visible — pivot for hop tuck)
+  const backLegGeo = new THREE.BoxGeometry(0.1, 0.18, 0.18);
+  const legsBack: THREE.Object3D[] = [];
+  for (const x of [-0.13, 0.13]) {
+    const pivot = new THREE.Group();
+    pivot.position.set(x, 0.18, -0.15);
+    group.add(pivot);
+    const leg = new THREE.Mesh(backLegGeo, bodyMat);
+    leg.position.y = -0.09;
+    leg.castShadow = true;
+    pivot.add(leg);
+    legsBack.push(pivot);
+  }
+
+  return { group, body, head: headPivot, earL: earPivotL, earR: earPivotR, legsBack, legsFront, tail };
+}
+
+function pickTarget(bounds: number): THREE.Vector3 {
+  const r = bounds * 0.85;
+  return new THREE.Vector3(
+    (Math.random() * 2 - 1) * r,
+    0,
+    (Math.random() * 2 - 1) * r
+  );
+}
+
+export class RabbitWarren implements HoldableProvider {
+  private rabbits: Rabbit[] = [];
+  private group: THREE.Group;
+  private bounds: number;
+  private heightData: Uint8Array | null;
+
+  constructor(scene: THREE.Scene, count: number, bounds: number, heightData: Uint8Array | null) {
+    this.bounds = bounds;
+    this.heightData = heightData;
+    this.group = new THREE.Group();
+    this.group.name = 'RabbitWarren';
+    scene.add(this.group);
+
+    for (let i = 0; i < count; i++) {
+      this.spawnRabbit();
+    }
+  }
+
+  private spawnRabbit(): void {
+    const parts = buildRabbitMesh();
+    const start = pickTarget(this.bounds);
+    const rabbit: Rabbit = {
+      parts,
+      pos: start.clone(),
+      yaw: Math.random() * Math.PI * 2,
+      target: pickTarget(this.bounds),
+      state: 'rest',
+      stateTimer: Math.random() * 1.5,
+      hopPhase: 0,
+      bounds: this.bounds,
+      heightData: this.heightData,
+      held: false
+    };
+    parts.group.position.copy(start);
+    parts.group.rotation.y = rabbit.yaw;
+    this.group.add(parts.group);
+    this.rabbits.push(rabbit);
+  }
+
+  update(delta: number): void {
+    for (const r of this.rabbits) {
+      if (r.held) continue;
+      this.updateRabbit(r, delta);
+    }
+  }
+
+  findNearestHoldable(pos: THREE.Vector3, maxDist: number): Holdable | null {
+    let best: Rabbit | null = null;
+    let bestSq = maxDist * maxDist;
+    for (const r of this.rabbits) {
+      if (r.held) continue;
+      const dx = r.pos.x - pos.x;
+      const dz = r.pos.z - pos.z;
+      const d = dx * dx + dz * dz;
+      if (d < bestSq) { bestSq = d; best = r; }
+    }
+    if (!best) return null;
+    const rab = best;
+    return {
+      mesh: rab.parts.group,
+      get held() { return rab.held; },
+      set held(v: boolean) { rab.held = v; },
+      pickUp: () => { rab.held = true; },
+      releaseAt: (p, yaw) => {
+        rab.held = false;
+        rab.pos.set(p.x, 0, p.z);
+        rab.yaw = yaw;
+        rab.target = pickTarget(rab.bounds);
+        rab.state = 'rest';
+        rab.stateTimer = 0.4 + Math.random() * 0.6;
+        rab.hopPhase = 0;
+        for (const l of rab.parts.legsBack) l.rotation.x = 0;
+        for (const l of rab.parts.legsFront) l.rotation.x = 0;
+        rab.parts.body.position.y = 0.27;
+        rab.parts.head.position.y = 0.34;
+        rab.parts.head.rotation.y = 0;
+        rab.parts.tail.position.y = 0.3;
+      }
+    };
+  }
+
+  private updateRabbit(r: Rabbit, delta: number): void {
+    const now = performance.now();
+
+    // Steer (always face target if we're not deeply stopped)
+    if (r.state !== 'stopped') {
+      const dx = r.target.x - r.pos.x;
+      const dz = r.target.z - r.pos.z;
+      const desiredYaw = Math.atan2(dx, dz);
+      let yawDiff = desiredYaw - r.yaw;
+      while (yawDiff > Math.PI) yawDiff -= Math.PI * 2;
+      while (yawDiff < -Math.PI) yawDiff += Math.PI * 2;
+      r.yaw += Math.max(-TURN_RATE * delta, Math.min(TURN_RATE * delta, yawDiff));
+    }
+
+    // State machine
+    if (r.state === 'hop') {
+      r.hopPhase += delta / HOP_DURATION;
+      const t = Math.min(1, r.hopPhase);
+
+      // Forward speed peaks mid-hop (sin profile)
+      const speedFactor = Math.sin(t * Math.PI);
+      r.pos.x += Math.sin(r.yaw) * HOP_SPEED * speedFactor * delta;
+      r.pos.z += Math.cos(r.yaw) * HOP_SPEED * speedFactor * delta;
+
+      // Vertical arc
+      const hopHeight = Math.sin(t * Math.PI) * 0.18;
+      r.parts.body.position.y = 0.27 + hopHeight;
+      r.parts.head.position.y = 0.34 + hopHeight;
+      r.parts.tail.position.y = 0.3 + hopHeight;
+
+      // Tuck back legs forward, then extend; front legs swing slightly
+      const tuck = Math.sin(t * Math.PI);
+      r.parts.legsBack[0].rotation.x = -0.6 * tuck;
+      r.parts.legsBack[1].rotation.x = -0.6 * tuck;
+      r.parts.legsFront[0].rotation.x = 0.4 * tuck;
+      r.parts.legsFront[1].rotation.x = 0.4 * tuck;
+
+      // Ears bob a bit
+      r.parts.earL.rotation.x = -0.1 * tuck;
+      r.parts.earR.rotation.x = -0.1 * tuck;
+
+      if (t >= 1) {
+        r.state = 'rest';
+        r.stateTimer = HOP_REST_RANGE[0] + Math.random() * (HOP_REST_RANGE[1] - HOP_REST_RANGE[0]);
+        r.hopPhase = 0;
+        // Reset limbs
+        for (const l of r.parts.legsBack) l.rotation.x = 0;
+        for (const l of r.parts.legsFront) l.rotation.x = 0;
+        r.parts.body.position.y = 0.27;
+        r.parts.head.position.y = 0.34;
+        r.parts.tail.position.y = 0.3;
+      }
+    } else if (r.state === 'rest') {
+      r.stateTimer -= delta;
+      // Subtle breathing
+      const breathe = Math.sin(now * 0.005) * 0.005;
+      r.parts.body.position.y = 0.27 + breathe;
+
+      const dx = r.target.x - r.pos.x;
+      const dz = r.target.z - r.pos.z;
+      const distSq = dx * dx + dz * dz;
+
+      if (distSq < REACH_RADIUS * REACH_RADIUS) {
+        // Arrived — sometimes stop and look around, otherwise pick new target
+        if (Math.random() < STOP_CHANCE) {
+          r.state = 'stopped';
+          r.stateTimer = STOP_TIME[0] + Math.random() * (STOP_TIME[1] - STOP_TIME[0]);
+        } else {
+          r.target = pickTarget(r.bounds);
+          r.stateTimer = 0;
+        }
+      } else if (r.stateTimer <= 0) {
+        r.state = 'hop';
+        r.hopPhase = 0;
+      }
+    } else {
+      // stopped — twitch ears, look around occasionally
+      r.stateTimer -= delta;
+      const twitchL = Math.sin(now * 0.012) * 0.15;
+      const twitchR = Math.sin(now * 0.012 + 1.7) * 0.15;
+      r.parts.earL.rotation.z = 0.1 + twitchL;
+      r.parts.earR.rotation.z = -0.1 + twitchR;
+      r.parts.head.rotation.y = Math.sin(now * 0.0015) * 0.6;
+
+      if (r.stateTimer <= 0) {
+        r.parts.head.rotation.y = 0;
+        r.target = pickTarget(r.bounds);
+        r.state = 'rest';
+        r.stateTimer = 0.2;
+      }
+    }
+
+    // Soft arena bounds
+    if (Math.abs(r.pos.x) > r.bounds || Math.abs(r.pos.z) > r.bounds) {
+      r.pos.x = Math.max(-r.bounds, Math.min(r.bounds, r.pos.x));
+      r.pos.z = Math.max(-r.bounds, Math.min(r.bounds, r.pos.z));
+      r.target = pickTarget(r.bounds);
+    }
+
+    // Settle ears toward neutral when not stopped
+    if (r.state !== 'stopped') {
+      r.parts.earL.rotation.z += (0.1 - r.parts.earL.rotation.z) * 0.1;
+      r.parts.earR.rotation.z += (-0.1 - r.parts.earR.rotation.z) * 0.1;
+    }
+
+    // Apply terrain
+    const y = getTerrainHeight(r.pos.x, r.pos.z, r.heightData);
+    r.parts.group.position.set(r.pos.x, y, r.pos.z);
+    r.parts.group.rotation.y = r.yaw;
+  }
+}
