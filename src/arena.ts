@@ -4,7 +4,7 @@
 
 import * as THREE from 'three';
 // @ts-ignore - JS texture modules
-import { createTexture as createCeramicTexture } from './textures/ceramic_gray.js';
+import { createDiffuse as createPillarDiffuse, createBump as createPillarBump } from './textures/pillar_rock/index.js';
 import { createTerrain, createWaterPlane } from './terrain';
 import { createForest } from './trees';
 
@@ -39,13 +39,21 @@ const colliders: Collider[] = [];
 let terrainHeightData: Uint8Array | null = null;
 
 // Cached textures
-let ceramicTexture: THREE.CanvasTexture | undefined;
+let pillarDiffuse: THREE.CanvasTexture | undefined;
+let pillarBump: THREE.CanvasTexture | undefined;
 
-function getCeramicTexture(): THREE.CanvasTexture {
-  if (ceramicTexture) return ceramicTexture;
-  ceramicTexture = createCeramicTexture(THREE, 256, 54321) as THREE.CanvasTexture;
-  ceramicTexture.repeat.set(1, 2);
-  return ceramicTexture;
+function getPillarDiffuse(): THREE.CanvasTexture {
+  if (pillarDiffuse) return pillarDiffuse;
+  pillarDiffuse = createPillarDiffuse(THREE, 512, 54321) as THREE.CanvasTexture;
+  pillarDiffuse.repeat.set(1, 2);
+  return pillarDiffuse;
+}
+
+function getPillarBump(): THREE.CanvasTexture {
+  if (pillarBump) return pillarBump;
+  pillarBump = createPillarBump(THREE, 512, 54321) as THREE.CanvasTexture;
+  pillarBump.repeat.set(1, 2);
+  return pillarBump;
 }
 
 
@@ -60,9 +68,11 @@ function createPillar(x: number, z: number): THREE.Mesh {
     16
   );
   const material = new THREE.MeshStandardMaterial({
-    map: getCeramicTexture(),
-    roughness: 0.8,
-    metalness: 0.1
+    map: getPillarDiffuse(),
+    bumpMap: getPillarBump(),
+    bumpScale: 1.6,
+    roughness: 0.95,
+    metalness: 0.04
   });
   const pillar = new THREE.Mesh(geometry, material);
   pillar.position.set(x, PILLAR_HEIGHT / 2, z);

@@ -28,6 +28,7 @@ import { getModeFromUrl, GameMode } from './mode';
 import { NetworkGame, ConnectionState } from './net';
 import { SkyEnvironment } from './sky';
 import { JUMP_FORCE } from './shared/physics';
+import { DamageSplatSystem } from './damage-splat';
 
 // ============================================================================
 // Character Factory
@@ -69,6 +70,7 @@ interface GameState {
   debuffs: DebuffManager;
   casts: CastSystem;
   projectiles: ProjectileSystem;
+  damageSplats: DamageSplatSystem;
   classSelectOpen: boolean;
 
   // CC cube visuals: entityId -> cube mesh
@@ -384,6 +386,12 @@ function tryUseAbility(state: GameState, key: string): void {
     },
     flashHit: (entityId) => {
       flashEntityHit(state, entityId);
+    },
+    spawnDamage: (entityId, min, max) => {
+      spawnDamage(state, entityId, min, max);
+    },
+    spawnHeal: (entityId, min, max) => {
+      spawnHeal(state, entityId, min, max);
     }
   };
 
@@ -455,6 +463,7 @@ function updateAutoAttack(state: GameState, delta: number): void {
     if (state.autoAttackSwingTimer <= 0) {
       state.playerView.triggerUpperBodyAttack?.(0.45);
       flashEntityHit(state, state.autoAttackTargetId);
+      spawnDamage(state, state.autoAttackTargetId, 8, 16);
       state.autoAttackSwingTimer = 1.5;
     }
   } else {
@@ -463,6 +472,20 @@ function updateAutoAttack(state: GameState, delta: number): void {
       state.autoAttackTargetId = null;
     }
   }
+}
+
+function spawnDamage(state: GameState, entityId: string, min: number, max: number): void {
+  const entity = state.entities.get(entityId);
+  if (!entity) return;
+  const amount = Math.floor(min + Math.random() * (max - min + 1));
+  state.damageSplats.spawnDamage(entity, amount);
+}
+
+function spawnHeal(state: GameState, entityId: string, min: number, max: number): void {
+  const entity = state.entities.get(entityId);
+  if (!entity) return;
+  const amount = Math.floor(min + Math.random() * (max - min + 1));
+  state.damageSplats.spawnHeal(entity, amount);
 }
 
 function flashEntityHit(state: GameState, entityId: string): void {
@@ -668,6 +691,7 @@ async function init(): Promise<GameState> {
     debuffs,
     casts,
     projectiles,
+    damageSplats: new DamageSplatSystem(scene),
     classSelectOpen: false,
     ccCubes: new Map(),
     mode,
@@ -771,6 +795,7 @@ function animateStandalone(state: GameState, delta: number): void {
   state.debuffs.update();
   state.casts.update();
   state.projectiles.update(delta);
+  state.damageSplats.update(delta);
   updateAutoAttack(state, delta);
 
   // Update UI
@@ -832,6 +857,8 @@ function animateMultiplayer(state: GameState, delta: number): void {
 
   // Update targeting
   state.targeting.update(state.player.position);
+
+  state.damageSplats.update(delta);
 
   // Update remote entities from network state
   const remoteEntities = network.getRemoteEntities();

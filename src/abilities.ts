@@ -36,6 +36,8 @@ export interface AbilityContext {
   getEntityPos: (id: string) => THREE.Vector3 | null;
   setEntityPos: (id: string, pos: THREE.Vector3) => void;
   flashHit: (entityId: string) => void;
+  spawnDamage: (entityId: string, min: number, max: number) => void;
+  spawnHeal: (entityId: string, min: number, max: number) => void;
 }
 
 // ============================================================================
@@ -75,6 +77,7 @@ const rogueAbilities: AbilityDef[] = [
       if (!ctx.targetId) return;
 
       ctx.flashHit(ctx.targetId);
+      ctx.spawnDamage(ctx.targetId, 18, 32);
       ctx.cooldowns.startCooldown('rogue_hemorrhage', 3);
     }
   },
@@ -161,7 +164,10 @@ const mageAbilities: AbilityDef[] = [
             targetId,
             20, // speed
             0x88ccff, // ice blue
-            () => ctx.flashHit(targetId)
+            () => {
+              ctx.flashHit(targetId);
+              ctx.spawnDamage(targetId, 28, 44);
+            }
           );
         }
       });
@@ -223,6 +229,7 @@ const priestAbilities: AbilityDef[] = [
         targetId: ctx.targetId,
         onComplete: () => {
           ctx.flashHit(ctx.targetId!);
+          ctx.spawnHeal(ctx.targetId!, 30, 50);
           // Would increment health here
         }
       });
@@ -258,7 +265,10 @@ const priestAbilities: AbilityDef[] = [
             targetId,
             15,
             0xffff88, // holy yellow
-            () => ctx.flashHit(targetId)
+            () => {
+              ctx.flashHit(targetId);
+              ctx.spawnDamage(targetId, 22, 38);
+            }
           );
         }
       });
