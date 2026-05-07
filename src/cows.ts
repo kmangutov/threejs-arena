@@ -40,12 +40,86 @@ interface Cow {
   bounds: number;
   heightData: Uint8Array | null;
   held: boolean;
+  mooCooldown: number;
+}
+
+interface MooBubble {
+  sprite: THREE.Sprite;
+  cow: Cow;
+  age: number;
+  lifetime: number;
+}
+
+const MOO_BUBBLE_LIFETIME = 2.2;
+const MOO_INITIAL_DELAY = [3, 12];
+const MOO_INTERVAL = [8, 22];
+
+// Cached sprite texture — same for every moo, drawn once.
+let mooTexture: THREE.CanvasTexture | null = null;
+function getMooTexture(): THREE.CanvasTexture {
+  if (mooTexture) return mooTexture;
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d')!;
+  ctx.clearRect(0, 0, 256, 128);
+  // RuneScape-style: bright yellow text, hard black 1-pixel drop shadow.
+  ctx.font = 'bold 80px Arial, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#000000';
+  ctx.fillText('Moo', 128 + 3, 64 + 3);
+  ctx.fillStyle = '#ffff00';
+  ctx.fillText('Moo', 128, 64);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.minFilter = THREE.LinearFilter;
+  mooTexture = tex;
+  return tex;
+}
+
+function makeCowHideTexture(bodyHex: number, spotHex: number): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 256;
+  const ctx = canvas.getContext('2d')!;
+  const toCss = (hex: number) => '#' + hex.toString(16).padStart(6, '0');
+  ctx.fillStyle = toCss(bodyHex);
+  ctx.fillRect(0, 0, 256, 256);
+
+  // Each spot is a cluster of 3-6 overlapping ellipses → soft, organic edge.
+  ctx.fillStyle = toCss(spotHex);
+  const spotCount = 6 + Math.floor(Math.random() * 5);
+  for (let i = 0; i < spotCount; i++) {
+    const cx = Math.random() * 256;
+    const cy = Math.random() * 256;
+    const blobs = 3 + Math.floor(Math.random() * 4);
+    for (let j = 0; j < blobs; j++) {
+      const ox = (Math.random() - 0.5) * 60;
+      const oy = (Math.random() - 0.5) * 60;
+      const rx = 18 + Math.random() * 28;
+      const ry = 18 + Math.random() * 28;
+      const rot = Math.random() * Math.PI;
+      ctx.beginPath();
+      ctx.ellipse(cx + ox, cy + oy, rx, ry, rot, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  return tex;
 }
 
 function buildCowMesh(): CowParts {
   const palette = PALETTE[Math.floor(Math.random() * PALETTE.length)];
-  const bodyMat = new THREE.MeshStandardMaterial({ color: palette.body, roughness: 0.9, metalness: 0.0 });
-  const spotMat = new THREE.MeshStandardMaterial({ color: palette.spot, roughness: 0.9, metalness: 0.0 });
+  // Hide texture carries the spots — body geometry stays clean.
+  const hideTex = makeCowHideTexture(palette.body, palette.spot);
+  const bodyMat = new THREE.MeshStandardMaterial({ map: hideTex, roughness: 0.9, metalness: 0.0 });
+  const plainBodyMat = new THREE.MeshStandardMaterial({ color: palette.body, roughness: 0.9, metalness: 0.0 });
+  const tuftMat = new THREE.MeshStandardMaterial({ color: palette.spot, roughness: 0.9 });
   const hornMat = new THREE.MeshStandardMaterial({ color: 0xe8dcc0, roughness: 0.5 });
   const noseMat = new THREE.MeshStandardMaterial({ color: 0xd9a4a4, roughness: 0.7 });
   const udderMat = new THREE.MeshStandardMaterial({ color: 0xe8a8a8, roughness: 0.8 });
@@ -54,34 +128,12 @@ function buildCowMesh(): CowParts {
   const group = new THREE.Group();
   group.name = 'Cow';
 
-  // Body — chunky barrel
+  // Body — chunky barrel, spots come from the texture.
   const bodyGeo = new THREE.BoxGeometry(0.75, 0.7, 1.4);
   const body = new THREE.Mesh(bodyGeo, bodyMat);
   body.position.y = 0.95;
   body.castShadow = true;
   group.add(body);
-
-  // Random spots on the flanks
-  const spotCount = 3 + Math.floor(Math.random() * 4);
-  for (let i = 0; i < spotCount; i++) {
-    const w = 0.18 + Math.random() * 0.18;
-    const h = 0.14 + Math.random() * 0.14;
-    const spotGeo = new THREE.BoxGeometry(w, h, 0.05);
-    const side = Math.random() < 0.5 ? -1 : 1;
-    const spot = new THREE.Mesh(spotGeo, spotMat);
-    spot.position.set(
-      side * 0.38,
-      0.78 + Math.random() * 0.3,
-      (Math.random() - 0.5) * 1.1
-    );
-    spot.rotation.y = side > 0 ? Math.PI / 2 : -Math.PI / 2;
-    group.add(spot);
-  }
-  // Top spot
-  const topSpotGeo = new THREE.BoxGeometry(0.4, 0.05, 0.5);
-  const topSpot = new THREE.Mesh(topSpotGeo, spotMat);
-  topSpot.position.set((Math.random() - 0.5) * 0.2, 1.31, (Math.random() - 0.5) * 0.4);
-  group.add(topSpot);
 
   // Head pivot at front
   const headPivot = new THREE.Group();
@@ -89,13 +141,13 @@ function buildCowMesh(): CowParts {
   group.add(headPivot);
 
   const neckGeo = new THREE.BoxGeometry(0.42, 0.42, 0.32);
-  const neck = new THREE.Mesh(neckGeo, bodyMat);
+  const neck = new THREE.Mesh(neckGeo, plainBodyMat);
   neck.position.set(0, -0.06, 0.04);
   neck.castShadow = true;
   headPivot.add(neck);
 
   const headGeo = new THREE.BoxGeometry(0.46, 0.42, 0.5);
-  const head = new THREE.Mesh(headGeo, bodyMat);
+  const head = new THREE.Mesh(headGeo, plainBodyMat);
   head.position.set(0, 0.04, 0.38);
   head.castShadow = true;
   headPivot.add(head);
@@ -126,7 +178,7 @@ function buildCowMesh(): CowParts {
 
   // Floppy side ears
   const earGeo = new THREE.BoxGeometry(0.16, 0.1, 0.22);
-  const earL = new THREE.Mesh(earGeo, bodyMat);
+  const earL = new THREE.Mesh(earGeo, plainBodyMat);
   earL.position.set(-0.27, 0.16, 0.22);
   earL.rotation.z = 0.4;
   headPivot.add(earL);
@@ -166,7 +218,7 @@ function buildCowMesh(): CowParts {
   group.add(tailRoot);
 
   const tailGeo = new THREE.BoxGeometry(0.07, 0.07, 0.6);
-  const tail = new THREE.Mesh(tailGeo, bodyMat);
+  const tail = new THREE.Mesh(tailGeo, plainBodyMat);
   tail.position.z = -0.3;
   tail.castShadow = true;
   tailRoot.add(tail);
@@ -176,7 +228,7 @@ function buildCowMesh(): CowParts {
   tuftPivot.position.set(0, 0, -0.6);
   tailRoot.add(tuftPivot);
   const tuftGeo = new THREE.BoxGeometry(0.16, 0.16, 0.18);
-  const tuft = new THREE.Mesh(tuftGeo, spotMat);
+  const tuft = new THREE.Mesh(tuftGeo, tuftMat);
   tuft.position.z = -0.09;
   tuft.castShadow = true;
   tuftPivot.add(tuft);
@@ -195,7 +247,7 @@ function buildCowMesh(): CowParts {
     group.add(pivot);
 
     const legGeo = new THREE.BoxGeometry(0.18, 0.7, 0.18);
-    const leg = new THREE.Mesh(legGeo, bodyMat);
+    const leg = new THREE.Mesh(legGeo, plainBodyMat);
     leg.position.y = -0.35;
     leg.castShadow = true;
     pivot.add(leg);
@@ -225,10 +277,13 @@ export class CowHerd implements HoldableProvider {
   private group: THREE.Group;
   private bounds: number;
   private heightData: Uint8Array | null;
+  private moos: MooBubble[] = [];
+  private scene: THREE.Scene;
 
   constructor(scene: THREE.Scene, count: number, bounds: number, heightData: Uint8Array | null) {
     this.bounds = bounds;
     this.heightData = heightData;
+    this.scene = scene;
     this.group = new THREE.Group();
     this.group.name = 'CowHerd';
     scene.add(this.group);
@@ -248,7 +303,8 @@ export class CowHerd implements HoldableProvider {
       walkPhase: Math.random() * Math.PI * 2,
       bounds: this.bounds,
       heightData: this.heightData,
-      held: false
+      held: false,
+      mooCooldown: MOO_INITIAL_DELAY[0] + Math.random() * (MOO_INITIAL_DELAY[1] - MOO_INITIAL_DELAY[0])
     };
     parts.group.position.copy(start);
     parts.group.rotation.y = cow.yaw;
@@ -260,6 +316,47 @@ export class CowHerd implements HoldableProvider {
     for (const cow of this.cows) {
       if (cow.held) continue;
       this.updateCow(cow, delta);
+      cow.mooCooldown -= delta;
+      if (cow.mooCooldown <= 0) {
+        this.spawnMoo(cow);
+        cow.mooCooldown = MOO_INTERVAL[0] + Math.random() * (MOO_INTERVAL[1] - MOO_INTERVAL[0]);
+      }
+    }
+    this.updateMoos(delta);
+  }
+
+  private spawnMoo(cow: Cow): void {
+    const mat = new THREE.SpriteMaterial({
+      map: getMooTexture(),
+      transparent: true,
+      depthTest: false,
+      depthWrite: false
+    });
+    const sprite = new THREE.Sprite(mat);
+    sprite.scale.set(1.4, 0.7, 1);
+    // World-space sprite so it doesn't rotate with the cow.
+    this.scene.add(sprite);
+    const head = cow.parts.group.position;
+    sprite.position.set(head.x, head.y + 2.0, head.z);
+    sprite.renderOrder = 999;
+    this.moos.push({ sprite, cow, age: 0, lifetime: MOO_BUBBLE_LIFETIME });
+  }
+
+  private updateMoos(delta: number): void {
+    for (let i = this.moos.length - 1; i >= 0; i--) {
+      const m = this.moos[i];
+      m.age += delta;
+      const t = m.age / m.lifetime;
+      if (t >= 1) {
+        this.scene.remove(m.sprite);
+        m.sprite.material.dispose();
+        this.moos.splice(i, 1);
+        continue;
+      }
+      // Rise above the cow's head, fade out near the end.
+      const cowPos = m.cow.parts.group.position;
+      m.sprite.position.set(cowPos.x, cowPos.y + 2.0 + t * 0.6, cowPos.z);
+      m.sprite.material.opacity = t < 0.7 ? 1 : 1 - (t - 0.7) / 0.3;
     }
   }
 
