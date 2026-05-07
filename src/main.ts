@@ -31,6 +31,7 @@ import { JUMP_FORCE } from './shared/physics';
 import { DamageSplatSystem } from './damage-splat';
 import { DogPack } from './dogs';
 import { RabbitWarren } from './rabbits';
+import { CatColony } from './cats';
 import { Holdable } from './holdable';
 
 // ============================================================================
@@ -76,6 +77,7 @@ interface GameState {
   damageSplats: DamageSplatSystem;
   dogs: DogPack;
   rabbits: RabbitWarren;
+  cats: CatColony;
   carrySlot: THREE.Group;
   heldAnimal: Holdable | null;
   classSelectOpen: boolean;
@@ -513,6 +515,8 @@ function tryPickup(state: GameState): void {
   if (dog) candidates.push(dog);
   const rabbit = state.rabbits.findNearestHoldable(playerPos, PICKUP_RANGE);
   if (rabbit) candidates.push(rabbit);
+  const cat = state.cats.findNearestHoldable(playerPos, PICKUP_RANGE);
+  if (cat) candidates.push(cat);
   if (!candidates.length) return;
 
   let nearest = candidates[0];
@@ -773,6 +777,7 @@ async function init(): Promise<GameState> {
     damageSplats: new DamageSplatSystem(scene),
     dogs: new DogPack(scene, 6, 18, getTerrainHeightData()),
     rabbits: new RabbitWarren(scene, 10, 18, getTerrainHeightData()),
+    cats: new CatColony(scene, 5, 18, getTerrainHeightData()),
     carrySlot: (() => {
       const slot = new THREE.Group();
       slot.name = 'CarrySlot';
@@ -888,6 +893,7 @@ function animateStandalone(state: GameState, delta: number): void {
   state.damageSplats.update(delta);
   state.dogs.update(delta);
   state.rabbits.update(delta);
+  state.cats.update(delta);
   updateCarrySlot(state);
   updateAutoAttack(state, delta);
 
@@ -954,6 +960,7 @@ function animateMultiplayer(state: GameState, delta: number): void {
   state.damageSplats.update(delta);
   state.dogs.update(delta);
   state.rabbits.update(delta);
+  state.cats.update(delta);
   updateCarrySlot(state);
 
   // Update remote entities from network state

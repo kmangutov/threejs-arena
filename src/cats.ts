@@ -1,0 +1,336 @@
+/**
+ * Procedural low-poly cats that wander the arena.
+ * Slimmer than dogs, with pointier ears and a long curving tail that
+ * swishes side-to-side. Same wander/pickup contract as DogPack.
+ */
+
+import * as THREE from 'three';
+import { getTerrainHeight } from './terrain';
+import { Holdable, HoldableProvider } from './holdable';
+
+const WALK_SPEED = 1.4;
+const TURN_RATE = 2.6;
+const REACH_RADIUS = 1.2;
+const PAUSE_CHANCE = 0.35;
+const PAUSE_TIME = [1.5, 4.5];
+const TAIL_SEGMENTS = 4;
+
+const PALETTE = [
+  { body: 0x2a2a2a, belly: 0x4a4a4a }, // black
+  { body: 0xe8e2d5, belly: 0xf5f1e6 }, // white
+  { body: 0xc99355, belly: 0xe8c08a }, // orange tabby
+  { body: 0x6b6055, belly: 0x9a8d7e }, // grey tabby
+  { body: 0x5a3a24, belly: 0x8a6440 }  // brown
+];
+
+interface CatParts {
+  group: THREE.Group;
+  legs: { mesh: THREE.Mesh; phase: number }[];
+  tail: THREE.Object3D;
+  tailSegments: THREE.Object3D[];
+  head: THREE.Object3D;
+  body: THREE.Object3D;
+}
+
+interface Cat {
+  parts: CatParts;
+  pos: THREE.Vector3;
+  yaw: number;
+  target: THREE.Vector3;
+  pauseTimer: number;
+  walkPhase: number;
+  bounds: number;
+  heightData: Uint8Array | null;
+  held: boolean;
+}
+
+function buildCatMesh(): CatParts {
+  const palette = PALETTE[Math.floor(Math.random() * PALETTE.length)];
+  const bodyMat = new THREE.MeshStandardMaterial({ color: palette.body, roughness: 0.85, metalness: 0.0 });
+  const bellyMat = new THREE.MeshStandardMaterial({ color: palette.belly, roughness: 0.85, metalness: 0.0 });
+  const noseMat = new THREE.MeshStandardMaterial({ color: 0xd07a8a, roughness: 0.6 });
+  const eyeMat = new THREE.MeshStandardMaterial({ color: 0x88dd55, roughness: 0.4 });
+
+  const group = new THREE.Group();
+  group.name = 'Cat';
+
+  // Body — slimmer than dog
+  const bodyGeo = new THREE.BoxGeometry(0.36, 0.34, 0.78);
+  const body = new THREE.Mesh(bodyGeo, bodyMat);
+  body.position.y = 0.48;
+  body.castShadow = true;
+  group.add(body);
+
+  // Belly underside
+  const bellyGeo = new THREE.BoxGeometry(0.34, 0.14, 0.7);
+  const belly = new THREE.Mesh(bellyGeo, bellyMat);
+  belly.position.set(0, 0.36, 0);
+  group.add(belly);
+
+  // Head pivot at front
+  const headPivot = new THREE.Group();
+  headPivot.position.set(0, 0.6, 0.42);
+  group.add(headPivot);
+
+  const headGeo = new THREE.BoxGeometry(0.32, 0.3, 0.32);
+  const head = new THREE.Mesh(headGeo, bodyMat);
+  head.position.set(0, 0.06, 0.16);
+  head.castShadow = true;
+  headPivot.add(head);
+
+  // Snout — small
+  const snoutGeo = new THREE.BoxGeometry(0.16, 0.12, 0.12);
+  const snout = new THREE.Mesh(snoutGeo, bellyMat);
+  snout.position.set(0, -0.02, 0.32);
+  headPivot.add(snout);
+
+  const noseGeo = new THREE.BoxGeometry(0.06, 0.05, 0.04);
+  const nose = new THREE.Mesh(noseGeo, noseMat);
+  nose.position.set(0, 0.0, 0.4);
+  headPivot.add(nose);
+
+  // Eyes
+  const eyeGeo = new THREE.BoxGeometry(0.05, 0.05, 0.04);
+  const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
+  eyeL.position.set(-0.09, 0.07, 0.31);
+  headPivot.add(eyeL);
+  const eyeR = new THREE.Mesh(eyeGeo, eyeMat);
+  eyeR.position.set(0.09, 0.07, 0.31);
+  headPivot.add(eyeR);
+
+  // Triangular pointy ears — tetrahedrons, sized like a tall pyramid
+  const earGeo = new THREE.ConeGeometry(0.08, 0.18, 4);
+  const earL = new THREE.Mesh(earGeo, bodyMat);
+  earL.position.set(-0.11, 0.28, 0.1);
+  earL.rotation.z = 0.15;
+  earL.rotation.y = Math.PI / 4;
+  headPivot.add(earL);
+  const earR = earL.clone();
+  earR.position.x = 0.11;
+  earR.rotation.z = -0.15;
+  headPivot.add(earR);
+
+  // Long tail — segmented chain so it can curve and swish
+  const tailRoot = new THREE.Group();
+  tailRoot.position.set(0, 0.6, -0.4);
+  group.add(tailRoot);
+
+  const segLen = 0.22;
+  const tailSegments: THREE.Object3D[] = [];
+  let parent: THREE.Object3D = tailRoot;
+  for (let i = 0; i < TAIL_SEGMENTS; i++) {
+    const seg = new THREE.Group();
+    seg.position.set(0, 0, i === 0 ? 0 : -segLen);
+    parent.add(seg);
+
+    const taper = 1 - i * 0.15;
+    const segGeo = new THREE.BoxGeometry(0.08 * taper, 0.08 * taper, segLen);
+    const segMesh = new THREE.Mesh(segGeo, bodyMat);
+    segMesh.position.z = -segLen / 2;
+    segMesh.castShadow = true;
+    seg.add(segMesh);
+
+    tailSegments.push(seg);
+    parent = seg;
+  }
+
+  // Legs
+  const legs: CatParts['legs'] = [];
+  const legPositions: [number, number, number][] = [
+    [-0.14, 0.32, 0],      // FL
+    [0.14, 0.32, Math.PI], // FR
+    [-0.14, -0.32, Math.PI], // BL
+    [0.14, -0.32, 0]         // BR
+  ];
+  for (const [x, z, phase] of legPositions) {
+    const pivot = new THREE.Group();
+    pivot.position.set(x, 0.4, z);
+    group.add(pivot);
+
+    const legGeo = new THREE.BoxGeometry(0.09, 0.4, 0.09);
+    const leg = new THREE.Mesh(legGeo, bodyMat);
+    leg.position.y = -0.2;
+    leg.castShadow = true;
+    pivot.add(leg);
+
+    const pawGeo = new THREE.BoxGeometry(0.11, 0.06, 0.14);
+    const paw = new THREE.Mesh(pawGeo, bellyMat);
+    paw.position.y = -0.4;
+    pivot.add(paw);
+
+    legs.push({ mesh: pivot as unknown as THREE.Mesh, phase });
+  }
+
+  return { group, legs, tail: tailRoot, tailSegments, head: headPivot, body };
+}
+
+function pickTarget(bounds: number): THREE.Vector3 {
+  const r = bounds * 0.85;
+  return new THREE.Vector3(
+    (Math.random() * 2 - 1) * r,
+    0,
+    (Math.random() * 2 - 1) * r
+  );
+}
+
+export class CatColony implements HoldableProvider {
+  private cats: Cat[] = [];
+  private group: THREE.Group;
+  private bounds: number;
+  private heightData: Uint8Array | null;
+
+  constructor(scene: THREE.Scene, count: number, bounds: number, heightData: Uint8Array | null) {
+    this.bounds = bounds;
+    this.heightData = heightData;
+    this.group = new THREE.Group();
+    this.group.name = 'CatColony';
+    scene.add(this.group);
+
+    for (let i = 0; i < count; i++) this.spawnCat();
+  }
+
+  private spawnCat(): void {
+    const parts = buildCatMesh();
+    const start = pickTarget(this.bounds);
+    const cat: Cat = {
+      parts,
+      pos: start.clone(),
+      yaw: Math.random() * Math.PI * 2,
+      target: pickTarget(this.bounds),
+      pauseTimer: 0,
+      walkPhase: Math.random() * Math.PI * 2,
+      bounds: this.bounds,
+      heightData: this.heightData,
+      held: false
+    };
+    parts.group.position.copy(start);
+    parts.group.rotation.y = cat.yaw;
+    this.group.add(parts.group);
+    this.cats.push(cat);
+  }
+
+  update(delta: number): void {
+    for (const cat of this.cats) {
+      if (cat.held) continue;
+      this.updateCat(cat, delta);
+    }
+  }
+
+  findNearestHoldable(pos: THREE.Vector3, maxDist: number): Holdable | null {
+    let best: Cat | null = null;
+    let bestSq = maxDist * maxDist;
+    for (const cat of this.cats) {
+      if (cat.held) continue;
+      const dx = cat.pos.x - pos.x;
+      const dz = cat.pos.z - pos.z;
+      const d = dx * dx + dz * dz;
+      if (d < bestSq) { bestSq = d; best = cat; }
+    }
+    if (!best) return null;
+    return this.makeHoldable(best);
+  }
+
+  private makeHoldable(cat: Cat): Holdable {
+    return {
+      mesh: cat.parts.group,
+      get held() { return cat.held; },
+      set held(v: boolean) { cat.held = v; },
+      pickUp: () => { cat.held = true; },
+      releaseAt: (pos, yaw) => {
+        cat.held = false;
+        cat.pos.set(pos.x, 0, pos.z);
+        cat.yaw = yaw;
+        cat.target = pickTarget(cat.bounds);
+        cat.pauseTimer = 0.6 + Math.random() * 0.6;
+        for (const leg of cat.parts.legs) leg.mesh.rotation.x = 0;
+        cat.parts.body.position.y = 0.48;
+        cat.parts.head.rotation.x = 0;
+        cat.parts.tail.rotation.y = 0;
+        for (const seg of cat.parts.tailSegments) seg.rotation.set(0, 0, 0);
+      }
+    };
+  }
+
+  private updateCat(cat: Cat, delta: number): void {
+    const moving = cat.pauseTimer <= 0;
+
+    if (!moving) {
+      cat.pauseTimer -= delta;
+      // Idle: lazy tail flick — base swings, segments trail with phase offset
+      const t = performance.now() * 0.004;
+      cat.parts.tail.rotation.y = Math.sin(t) * 0.3;
+      cat.parts.tailSegments.forEach((seg, i) => {
+        seg.rotation.y = Math.sin(t - i * 0.4) * 0.25;
+      });
+      // Slow head turn — curious cat
+      cat.parts.head.rotation.y = Math.sin(t * 0.5) * 0.3;
+      for (const leg of cat.parts.legs) leg.mesh.rotation.x *= 0.9;
+      this.applyTerrain(cat);
+      return;
+    }
+
+    cat.parts.head.rotation.y *= 0.9;
+
+    const dx = cat.target.x - cat.pos.x;
+    const dz = cat.target.z - cat.pos.z;
+    const distSq = dx * dx + dz * dz;
+
+    if (distSq < REACH_RADIUS * REACH_RADIUS) {
+      if (Math.random() < PAUSE_CHANCE) {
+        cat.pauseTimer = PAUSE_TIME[0] + Math.random() * (PAUSE_TIME[1] - PAUSE_TIME[0]);
+      }
+      cat.target = pickTarget(cat.bounds);
+      return;
+    }
+
+    const desiredYaw = Math.atan2(dx, dz);
+    let yawDiff = desiredYaw - cat.yaw;
+    while (yawDiff > Math.PI) yawDiff -= Math.PI * 2;
+    while (yawDiff < -Math.PI) yawDiff += Math.PI * 2;
+    const turn = Math.max(-TURN_RATE * delta, Math.min(TURN_RATE * delta, yawDiff));
+    cat.yaw += turn;
+
+    const turnPenalty = 1 - Math.min(1, Math.abs(yawDiff) / Math.PI) * 0.6;
+    const speed = WALK_SPEED * turnPenalty;
+    cat.pos.x += Math.sin(cat.yaw) * speed * delta;
+    cat.pos.z += Math.cos(cat.yaw) * speed * delta;
+
+    if (Math.abs(cat.pos.x) > cat.bounds || Math.abs(cat.pos.z) > cat.bounds) {
+      cat.pos.x = Math.max(-cat.bounds, Math.min(cat.bounds, cat.pos.x));
+      cat.pos.z = Math.max(-cat.bounds, Math.min(cat.bounds, cat.pos.z));
+      cat.target = pickTarget(cat.bounds);
+    }
+
+    // Walk cycle — slightly faster cadence than dog, lighter step
+    cat.walkPhase += delta * 10 * turnPenalty;
+    const swing = Math.sin(cat.walkPhase) * 0.6;
+    const swingOpp = Math.sin(cat.walkPhase + Math.PI) * 0.6;
+    cat.parts.legs[0].mesh.rotation.x = swing;
+    cat.parts.legs[1].mesh.rotation.x = swingOpp;
+    cat.parts.legs[2].mesh.rotation.x = swingOpp;
+    cat.parts.legs[3].mesh.rotation.x = swing;
+
+    // Subtle body bob — cats are smoother walkers
+    const bob = Math.abs(Math.sin(cat.walkPhase * 2)) * 0.025;
+    cat.parts.body.position.y = 0.48 + bob;
+
+    // Tail swish — base drives, segments trail with increasing phase lag and amplitude
+    const tailPhase = cat.walkPhase * 0.6;
+    cat.parts.tail.rotation.y = Math.sin(tailPhase) * 0.4;
+    cat.parts.tailSegments.forEach((seg, i) => {
+      seg.rotation.y = Math.sin(tailPhase - (i + 1) * 0.5) * (0.25 + i * 0.05);
+      // Slight upward curve at rest
+      seg.rotation.x = -0.08;
+    });
+
+    cat.parts.head.rotation.x = Math.sin(cat.walkPhase) * 0.05;
+
+    this.applyTerrain(cat);
+  }
+
+  private applyTerrain(cat: Cat): void {
+    const y = getTerrainHeight(cat.pos.x, cat.pos.z, cat.heightData);
+    cat.parts.group.position.set(cat.pos.x, y, cat.pos.z);
+    cat.parts.group.rotation.y = cat.yaw;
+  }
+}
