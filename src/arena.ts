@@ -20,6 +20,10 @@ export interface CylinderCollider {
   z: number;
   radius: number;
   height: number;
+  /** Y position of the cylinder's TOP. If set and `climbable`, the player can stand on it. */
+  topY?: number;
+  /** If true, the player can stand on top of this cylinder (otherwise it's a wall). */
+  climbable?: boolean;
 }
 
 export interface BoxCollider {

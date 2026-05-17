@@ -210,7 +210,10 @@ export class PlayerController {
 
     for (const col of this.colliders) {
       if (col.type === 'cylinder') {
-        this.resolveCylinder(col);
+        const cylGround = this.resolveCylinder(col);
+        if (cylGround !== null && cylGround > newGroundLevel) {
+          newGroundLevel = cylGround;
+        }
       } else if (col.type === 'box') {
         const boxGround = this.resolveBox(col);
         if (boxGround > newGroundLevel) {
@@ -223,17 +226,33 @@ export class PlayerController {
   }
 
   /**
-   * Resolve collision with a cylinder (pillar)
-   * Push out horizontally with wall sliding
+   * Resolve collision with a cylinder.
+   *
+   * Returns the ground level when the player should stand on top of a
+   * climbable cylinder, otherwise `null`. Always also performs horizontal
+   * pushout / wall slide when the player is intersecting the cylinder's
+   * vertical extent.
    */
-  private resolveCylinder(col: CylinderCollider): void {
+  private resolveCylinder(col: CylinderCollider): number | null {
     const dx = this.position.x - col.x;
     const dz = this.position.z - col.z;
     const dist = Math.sqrt(dx * dx + dz * dz);
     const minDist = col.radius + this.config.radius;
 
-    if (dist < minDist && dist > 0.001) {
-      // Push out along the normal
+    // Climb-on-top: if cylinder has a top surface and player feet are at-or-
+    // above it (within the footprint, with a small lip tolerance), let them
+    // stand on it. Mirrors the box-top logic.
+    if (col.climbable && col.topY !== undefined && dist < col.radius + this.config.radius * 0.8) {
+      if (this.position.y >= col.topY - 0.05) {
+        return col.topY;
+      }
+    }
+
+    // Wall pushout / slide if the player intrudes into the cylinder. Skip
+    // when player is clearly above the top (so climbing isn't fought by the
+    // horizontal push the same frame they land).
+    const aboveTop = col.topY !== undefined && this.position.y >= col.topY - 0.05;
+    if (!aboveTop && dist < minDist && dist > 0.001) {
       const overlap = minDist - dist;
       const nx = dx / dist;
       const nz = dz / dist;
@@ -241,13 +260,13 @@ export class PlayerController {
       this.position.x += nx * overlap;
       this.position.z += nz * overlap;
 
-      // Wall slide: remove velocity component into the wall
       const velDotN = this.velocity.x * nx + this.velocity.z * nz;
       if (velDotN < 0) {
         this.velocity.x -= velDotN * nx;
         this.velocity.z -= velDotN * nz;
       }
     }
+    return null;
   }
 
   /**

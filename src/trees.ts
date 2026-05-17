@@ -41,6 +41,31 @@ function startWindTicker() {
   requestAnimationFrame(tick);
 }
 
+/**
+ * Public factory for the alpha-billboard foliage material — same wind+puff
+ * shader used by the GLB trees, exposed so procedural trees can share the
+ * exact same look (and the same alpha texture once loaded).
+ */
+export function createFoliageMaterialPublic(alphaMap: THREE.Texture, color: number = 0x3f6d21): THREE.MeshStandardMaterial {
+  const m = createFoliageMaterial(alphaMap);
+  m.color.setHex(color);
+  return m;
+}
+
+export function getFoliageAlphaTexture(): Promise<THREE.Texture> {
+  const texLoader = new THREE.TextureLoader();
+  texLoader.setCrossOrigin('anonymous');
+  return new Promise((resolve, reject) => {
+    texLoader.load(FOLIAGE_ALPHA_URL, (t) => {
+      t.colorSpace = THREE.NoColorSpace;
+      t.wrapS = THREE.ClampToEdgeWrapping;
+      t.wrapT = THREE.ClampToEdgeWrapping;
+      startWindTicker();
+      resolve(t);
+    }, undefined, reject);
+  });
+}
+
 function createFoliageMaterial(alphaMap: THREE.Texture): THREE.MeshStandardMaterial {
   const material = new THREE.MeshStandardMaterial({
     color: new THREE.Color('#3f6d21'),

@@ -34,6 +34,12 @@ import { RabbitWarren } from './rabbits';
 import { CatColony } from './cats';
 import { CowHerd } from './cows';
 import { Holdable } from './holdable';
+import { SceneEditor } from './editor';
+import { SnapshotSystem } from './snapshot';
+import { Ecosystem } from './ecosystem';
+import { getTerrainHeight } from './terrain';
+import { ProceduralTree } from './proceduralTree';
+import { ColliderDebug } from './collider-debug';
 
 // ============================================================================
 // Character Factory
@@ -86,6 +92,12 @@ interface GameState {
 
   // CC cube visuals: entityId -> cube mesh
   ccCubes: Map<string, THREE.Mesh>;
+
+  // Dev tools / generative world
+  editor: SceneEditor;
+  snapshots: SnapshotSystem;
+  ecosystem: Ecosystem;
+  colliderDebug: ColliderDebug;
 
   // Phase 4: Network state
   mode: GameMode;
@@ -643,8 +655,9 @@ async function init(): Promise<GameState> {
   }
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x1a1a2e);
-  scene.fog = new THREE.Fog(0x1a1a2e, 30, 60);
+  // Warm Nagrand-like horizon haze; sky shader paints the actual dome.
+  scene.background = new THREE.Color(0x6b8db5);
+  scene.fog = new THREE.Fog(0x9bb6c9, 45, 110);
 
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   if (!renderer.getContext()) {
@@ -654,8 +667,11 @@ async function init(): Promise<GameState> {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  // WoW-style: warmer exposure + AgX-like filmic curve via ACES, plus a
+  // saturation lift through outputColorSpace (sRGB).
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.0;
+  renderer.toneMappingExposure = 1.15;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
   document.body.appendChild(renderer.domElement);
 
   const cameraRig = new CameraRig();
@@ -663,6 +679,39 @@ async function init(): Promise<GameState> {
 
   const arena = createArena();
   scene.add(arena);
+
+  // Generative ecosystem — grass blades (shader-driven, wind-swayed), plus
+  // flowers, rocks, mushrooms, huts. Pickable in the SceneEditor; both the
+  // Ecosystem group and its GrassField child expose editableParams so
+  // seed/biome/density/wind/colors can be tweaked live.
+  const terrainData = getTerrainHeightData();
+  const ecosystem = new Ecosystem(
+    terrainData,
+    (x, z) => getTerrainHeight(x, z, terrainData),
+  );
+  scene.add(ecosystem);
+
+  // A single procedural tree placed on the map as a tweakable showcase —
+  // pickable in the SceneEditor with full param schema (seed, trunk height,
+  // canopy scale, leaf puff, bend).
+  const showcaseTree = new ProceduralTree({ seed: 42 });
+  showcaseTree.position.set(6, getTerrainHeight(6, -7, terrainData), -7);
+  showcaseTree.scale.setScalar(1.4);
+  scene.add(showcaseTree);
+
+  // Sprinkle a handful more procedural trees around the edges so the
+  // procedural pipeline coexists with the GLB forest. Each gets a different
+  // seed so silhouettes vary.
+  for (let i = 0; i < 5; i++) {
+    const angle = (i / 5) * Math.PI * 2 + 0.5;
+    const r = 22 + (i % 2) * 4;
+    const x = Math.cos(angle) * r;
+    const z = Math.sin(angle) * r;
+    const t = new ProceduralTree({ seed: 100 + i * 7 });
+    t.position.set(x, getTerrainHeight(x, z, terrainData), z);
+    t.scale.setScalar(1.1 + (i % 3) * 0.2);
+    scene.add(t);
+  }
 
   const sky = new SkyEnvironment();
   scene.add(sky);
@@ -696,7 +745,10 @@ async function init(): Promise<GameState> {
     new THREE.Vector3(...playerDef.position)
   );
   player.mesh = playerView.root;
-  player.setColliders(getColliders());
+  // Combine static arena colliders with the ecosystem's dynamic ones (huts +
+  // sizeable rocks). Re-applied whenever the ecosystem regenerates.
+  const refreshColliders = () => player.setColliders([...getColliders(), ...ecosystem.getColliders()]);
+  refreshColliders();
   player.setTerrainHeightData(getTerrainHeightData());
 
   // Only attach local input in standalone mode
@@ -801,12 +853,74 @@ async function init(): Promise<GameState> {
     autoAttackRange: 0,
     autoAttackSwingTimer: 0,
     autoAttackOORTime: 0,
+    editor: undefined as unknown as SceneEditor,
+    snapshots: undefined as unknown as SnapshotSystem,
+    ecosystem,
+    colliderDebug: undefined as unknown as ColliderDebug,
+  };
+
+  // Dev tools: editor (`), snapshots (F2/F3), collider debug (F4)
+  state.editor = new SceneEditor(scene, cameraRig.camera, renderer.domElement);
+  state.snapshots = new SnapshotSystem({
+    renderer,
+    scene,
+    camera: cameraRig.camera,
+    rig: cameraRig,
+    player,
+  });
+  state.colliderDebug = new ColliderDebug({
+    scene,
+    getColliders: () => [...getColliders(), ...ecosystem.getColliders()],
+  });
+
+  // Push fresh colliders to the player whenever the ecosystem regenerates,
+  // so editor tweaks (seed, biome, density) keep collision in sync.
+  const origSet = ecosystem.userData.editableParams.set;
+  ecosystem.userData.editableParams.set = (next: Record<string, unknown>) => {
+    origSet(next);
+    refreshColliders();
   };
 
   setupInput(state);
   updateActionBar(state);
 
   return state;
+}
+
+// ============================================================================
+// Grass collision — feed player + nearest animals to the grass shader so
+// blades bend underfoot and snap back when actors leave.
+// ============================================================================
+
+const _grassActorScratch: Array<{ pos: THREE.Vector3; radius: number; d2: number }> = [];
+
+function updateGrassActors(state: GameState): void {
+  _grassActorScratch.length = 0;
+
+  // Player always gets a slot (radius ~ player capsule + a bit).
+  _grassActorScratch.push({ pos: state.player.position.clone(), radius: 1.1, d2: 0 });
+
+  // Collect candidate animal positions by walking the named pack groups.
+  const playerPos = state.player.position;
+  const packs = ['DogPack', 'RabbitWarren', 'CatColony', 'CowHerd'];
+  const tmp = new THREE.Vector3();
+  for (const name of packs) {
+    const pack = state.scene.getObjectByName(name);
+    if (!pack) continue;
+    for (const child of pack.children) {
+      child.getWorldPosition(tmp);
+      const dx = tmp.x - playerPos.x;
+      const dz = tmp.z - playerPos.z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 > 18 * 18) continue; // skip far animals — they won't be in the visible grass anyway
+      // Smaller radius for animals than the player.
+      _grassActorScratch.push({ pos: tmp.clone(), radius: 0.75, d2 });
+    }
+  }
+
+  // Keep the closest 8 actors total (the shader's MAX_ACTORS).
+  _grassActorScratch.sort((a, b) => a.d2 - b.d2);
+  state.ecosystem.grass.setActors(_grassActorScratch.slice(0, 8));
 }
 
 // ============================================================================
@@ -902,6 +1016,10 @@ function animateStandalone(state: GameState, delta: number): void {
   state.cows.update(delta);
   updateCarrySlot(state);
   updateAutoAttack(state, delta);
+  state.editor.update();
+  state.ecosystem.update(state.clock.elapsedTime);
+  state.colliderDebug.update();
+  updateGrassActors(state);
 
   // Update UI
   updateActionBar(state);
@@ -969,6 +1087,10 @@ function animateMultiplayer(state: GameState, delta: number): void {
   state.cats.update(delta);
   state.cows.update(delta);
   updateCarrySlot(state);
+  state.editor.update();
+  state.ecosystem.update(state.clock.elapsedTime);
+  state.colliderDebug.update();
+  updateGrassActors(state);
 
   // Update remote entities from network state
   const remoteEntities = network.getRemoteEntities();
@@ -1023,6 +1145,8 @@ function animateMultiplayer(state: GameState, delta: number): void {
 // ============================================================================
 
 init().then((gameState) => {
+  // Expose for headless screenshot tools and the in-browser console.
+  (window as unknown as { __game: unknown }).__game = gameState;
   animate(gameState);
   console.log('WoW Arena Sandbox - Phase 4');
   console.log('Controls:');

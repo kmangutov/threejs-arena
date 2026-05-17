@@ -1,0 +1,641 @@
+/**
+ * Generative ecosystem — seeded placement of grass tufts, flowers, rocks,
+ * mushrooms, and small huts across the arena floor.
+ *
+ * The system exposes its parameters via `userData.editableParams`, which the
+ * SceneEditor picks up and renders as live-editable controls. Hitting
+ * "Regenerate" rebuilds all placements with the current seed/params.
+ *
+ * Per-instance edits: huts are individual meshes (pickable in the editor);
+ * grass/flowers/rocks/mushrooms are instanced for perf and edited at the
+ * group level (color, density, scale).
+ */
+
+import * as THREE from 'three';
+import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+import { GrassField } from './grass';
+import type { Collider } from './arena';
+
+export type Biome = 'grassland' | 'autumn' | 'tundra' | 'arid';
+
+export interface EcosystemParams {
+  seed: number;
+  biome: Biome;
+  innerRadius: number;     // exclude props inside this radius (keep combat area clean)
+  outerRadius: number;
+  flowerCount: number;
+  rockCount: number;
+  mushroomCount: number;
+  hutCount: number;
+  rockScale: number;
+}
+
+export const DEFAULT_PARAMS: EcosystemParams = {
+  seed: 1337,
+  biome: 'grassland',
+  innerRadius: 9,
+  outerRadius: 38,
+  flowerCount: 350,
+  // Heavier rock count + power-law sizing produces many small pebbles around
+  // a few rich veins, with the occasional hill-scale boulder.
+  rockCount: 220,
+  mushroomCount: 60,
+  hutCount: 6,
+  rockScale: 1.0,
+};
+
+interface Palette {
+  grass: [number, number];   // [primary, secondary] hex colors blended per tuft
+  flower: number[];
+  rock: number;
+  mushroomCap: number;
+  mushroomStem: number;
+  hutWall: number;
+  hutRoof: number;
+  ground: number;            // accent disc tint
+}
+
+const PALETTES: Record<Biome, Palette> = {
+  grassland: {
+    grass: [0x4f7f2a, 0x6fa540],
+    flower: [0xf2c14e, 0xe85d75, 0xf0eaf4, 0xa86fe4],
+    rock: 0x7a7368,
+    mushroomCap: 0xc44a3f,
+    mushroomStem: 0xf3ead4,
+    hutWall: 0x8a6a3d,
+    hutRoof: 0x6a3a1f,
+    ground: 0x5a8a3a,
+  },
+  autumn: {
+    grass: [0x8a5a1a, 0xb88340],
+    flower: [0xe85d2a, 0xd9bf3a, 0xc94020],
+    rock: 0x6b5b48,
+    mushroomCap: 0xa83820,
+    mushroomStem: 0xe6d5b0,
+    hutWall: 0x7a5320,
+    hutRoof: 0x4a1f10,
+    ground: 0x7a5520,
+  },
+  tundra: {
+    grass: [0xc0d4d0, 0x9ab6b3],
+    flower: [0xeaf1f5, 0xb7d4ea, 0xd8e3ec],
+    rock: 0x90989a,
+    mushroomCap: 0x6a8aa0,
+    mushroomStem: 0xeaf1ef,
+    hutWall: 0xb8b0a0,
+    hutRoof: 0x5e6770,
+    ground: 0xbcc9c4,
+  },
+  arid: {
+    grass: [0xc9a558, 0xa6803a],
+    flower: [0xd84620, 0xf0bf3a, 0xe87a25],
+    rock: 0x9a7a55,
+    mushroomCap: 0xc06030,
+    mushroomStem: 0xeed8b0,
+    hutWall: 0xb88a4a,
+    hutRoof: 0x6a3a1a,
+    ground: 0xc6a368,
+  },
+};
+
+/** Tiny mulberry32 PRNG — deterministic, no deps. */
+function makeRng(seed: number): () => number {
+  let a = seed | 0;
+  return () => {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+export class Ecosystem extends THREE.Group {
+  params: EcosystemParams;
+  grass: GrassField;
+  private readonly heightSampler: (x: number, z: number) => number;
+
+  constructor(_heightData: Uint8Array | null, heightSampler: (x: number, z: number) => number, initial: Partial<EcosystemParams> = {}) {
+    super();
+    this.name = 'Ecosystem';
+    this.heightSampler = heightSampler;
+    this.grass = new GrassField(heightSampler, {
+      seed: (initial.seed ?? DEFAULT_PARAMS.seed) ^ 0xA5A5,
+      innerRadius: initial.innerRadius ?? DEFAULT_PARAMS.innerRadius,
+      outerRadius: initial.outerRadius ?? DEFAULT_PARAMS.outerRadius,
+    });
+    this.add(this.grass);
+    this.params = { ...DEFAULT_PARAMS, ...initial };
+
+    // Expose to editor.
+    this.userData.editableParams = {
+      schema: ecosystemSchema(),
+      get: () => this.params,
+      set: (next: Partial<EcosystemParams>) => {
+        this.params = { ...this.params, ...next };
+        this.regenerate();
+      },
+      regenerate: () => this.regenerate(),
+    };
+
+    this.regenerate();
+  }
+
+  regenerate(): void {
+    // Clear previous children (keep the GrassField; it has its own lifecycle).
+    for (const child of [...this.children]) {
+      if (child === this.grass) continue;
+      this.remove(child);
+      disposeDeep(child);
+    }
+
+    const rng = makeRng(this.params.seed);
+    const palette = PALETTES[this.params.biome];
+
+    // Update grass placement, seed, and biome-tinted colors when the
+    // ecosystem regenerates. Each biome maps grass to its palette's primary
+    // green/gold pair.
+    this.grass.params = {
+      ...this.grass.params,
+      seed: this.params.seed ^ 0xA5A5,
+      innerRadius: this.params.innerRadius,
+      outerRadius: this.params.outerRadius,
+      baseColor: palette.grass[0],
+      tipColor: palette.grass[1],
+    };
+    this.grass.rebuild();
+
+    // Huts placed first so rocks can avoid overlapping them.
+    const hutsGroup = buildHuts(rng, this.params, palette, this.heightSampler);
+    const hutObstacles = hutsGroup.children.map(h => ({
+      x: h.position.x,
+      z: h.position.z,
+      r: HUT_ROOF_RADIUS * (h.scale.x || 1) + 0.5,
+    }));
+    // 4 arena pillars at (±8, ±8) with radius ~1.2.
+    const pillarObstacles = [
+      { x: -8, z: -8, r: 1.6 },
+      { x:  8, z: -8, r: 1.6 },
+      { x: -8, z:  8, r: 1.6 },
+      { x:  8, z:  8, r: 1.6 },
+    ];
+    const obstacles = [...hutObstacles, ...pillarObstacles];
+
+    this.add(hutsGroup);
+    this.add(buildFlowers(rng, this.params, palette, this.heightSampler));
+    this.add(buildRocks(rng, this.params, palette, this.heightSampler, obstacles));
+    this.add(buildMushrooms(rng, this.params, palette, this.heightSampler));
+  }
+
+  /** Drive wind animation. */
+  update(elapsed: number): void {
+    this.grass.update(elapsed);
+  }
+
+  /**
+   * Colliders for every solid prop in the ecosystem (huts + sizeable rocks).
+   * Geometry is derived directly from each primitive's dimensions so the
+   * hitbox matches what's rendered.
+   */
+  getColliders(): Collider[] {
+    const out: Collider[] = [];
+    for (const child of this.children) {
+      // Huts (parent group; each child is a single hut group with .collider)
+      if (child.name === 'Huts') {
+        for (const hut of child.children) {
+          const c = hut.userData.collider as { type: 'cylinder'; radius: number; height: number } | undefined;
+          if (!c) continue;
+          const scale = hut.scale.x || 1;
+          out.push({
+            type: 'cylinder',
+            x: hut.position.x,
+            z: hut.position.z,
+            radius: c.radius * scale,
+            height: c.height * scale,
+          });
+        }
+      }
+      // Rocks
+      if (child.name === 'Rocks') {
+        const cols = child.userData.colliders as Collider[] | undefined;
+        if (cols) out.push(...cols);
+      }
+    }
+    return out;
+  }
+}
+
+function ecosystemSchema() {
+  return [
+    { key: 'seed',          label: 'Seed',          type: 'int' as const, min: 0, max: 99999, step: 1 },
+    { key: 'biome',         label: 'Biome',         type: 'select' as const, options: ['grassland', 'autumn', 'tundra', 'arid'] },
+    { key: 'innerRadius',   label: 'Inner radius',  type: 'float' as const, min: 0, max: 40, step: 0.5 },
+    { key: 'outerRadius',   label: 'Outer radius',  type: 'float' as const, min: 5, max: 50, step: 0.5 },
+    { key: 'flowerCount',   label: 'Flowers',       type: 'int' as const, min: 0, max: 1000, step: 25 },
+    { key: 'rockCount',     label: 'Rocks',         type: 'int' as const, min: 0, max: 300, step: 5 },
+    { key: 'mushroomCount', label: 'Mushrooms',     type: 'int' as const, min: 0, max: 300, step: 5 },
+    { key: 'hutCount',      label: 'Huts',          type: 'int' as const, min: 0, max: 20, step: 1 },
+    { key: 'rockScale',     label: 'Rock scale',    type: 'float' as const, min: 0.3, max: 3.0, step: 0.05 },
+  ];
+}
+
+// ---------- builders ----------
+
+function sampleRadial(rng: () => number, inner: number, outer: number): [number, number] {
+  // Uniform-area sampling in annulus.
+  const a = rng() * Math.PI * 2;
+  const r = Math.sqrt(rng() * (outer * outer - inner * inner) + inner * inner);
+  return [Math.cos(a) * r, Math.sin(a) * r];
+}
+
+function buildFlowers(
+  rng: () => number,
+  p: EcosystemParams,
+  palette: Palette,
+  height: (x: number, z: number) => number,
+): THREE.Object3D {
+  // Small disc + stem.
+  const group = new THREE.Group();
+  group.name = 'Flowers';
+
+  const stemGeo = new THREE.CylinderGeometry(0.015, 0.015, 0.25, 4);
+  stemGeo.translate(0, 0.125, 0);
+  const stemMat = new THREE.MeshLambertMaterial({ color: 0x3b5a1a });
+  const stems = new THREE.InstancedMesh(stemGeo, stemMat, p.flowerCount);
+  stems.name = 'FlowerStems';
+
+  const headGeo = new THREE.CircleGeometry(0.08, 6);
+  headGeo.rotateX(-Math.PI / 2);
+  headGeo.translate(0, 0.27, 0);
+  const headMat = new THREE.MeshLambertMaterial({ color: 0xffffff, side: THREE.DoubleSide });
+  const heads = new THREE.InstancedMesh(headGeo, headMat, p.flowerCount);
+  heads.name = 'FlowerHeads';
+
+  const tmpMatrix = new THREE.Matrix4();
+  const tmpQuat = new THREE.Quaternion();
+  const tmpPos = new THREE.Vector3();
+  const tmpScale = new THREE.Vector3(1, 1, 1);
+  const tmpColor = new THREE.Color();
+
+  for (let i = 0; i < p.flowerCount; i++) {
+    const [x, z] = sampleRadial(rng, p.innerRadius, p.outerRadius);
+    const y = height(x, z);
+    const s = 0.8 + rng() * 0.6;
+    tmpPos.set(x, y, z);
+    tmpScale.set(s, s, s);
+    tmpQuat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rng() * Math.PI * 2);
+    tmpMatrix.compose(tmpPos, tmpQuat, tmpScale);
+    stems.setMatrixAt(i, tmpMatrix);
+    heads.setMatrixAt(i, tmpMatrix);
+
+    tmpColor.set(palette.flower[Math.floor(rng() * palette.flower.length)]);
+    heads.setColorAt(i, tmpColor);
+  }
+  stems.instanceMatrix.needsUpdate = true;
+  heads.instanceMatrix.needsUpdate = true;
+  if (heads.instanceColor) heads.instanceColor.needsUpdate = true;
+
+  group.add(stems);
+  group.add(heads);
+  return group;
+}
+
+interface RockObstacle { x: number; z: number; r: number }
+
+function buildRocks(
+  rng: () => number,
+  p: EcosystemParams,
+  palette: Palette,
+  height: (x: number, z: number) => number,
+  obstacles: RockObstacle[] = [],
+): THREE.Object3D {
+  // Vein clustering: pick K vein centers across the annulus, then sample
+  // rocks weighted toward them (gaussian falloff per vein). A small fraction
+  // are "stray" rocks placed uniformly so the field doesn't feel grid-like.
+  //
+  // Size distribution: Pareto-like (power-law). Most rocks are small (0.4–1.0),
+  // a few are mid (1.0–2.0), and rare ones become hill-sized boulders (2.5–4.5).
+  //
+  // Some veins are flagged as "boulder fields" — they spawn a small hill
+  // cluster (one big boulder + several supporting rocks).
+  const group = new THREE.Group();
+  group.name = 'Rocks';
+
+  // IcosahedronGeometry is non-indexed AND its UV attribute introduces seams
+  // (verts at the same position with different UVs), so `mergeVertices` only
+  // collapses verts that share BOTH. To get a truly watertight shape, strip
+  // the UV attribute first — rocks have no texture map. Then merge, jitter
+  // the unique vertex set, and go back to non-indexed for flat shading.
+  const rawGeo = new THREE.IcosahedronGeometry(0.35, 1);
+  rawGeo.deleteAttribute('uv');
+  rawGeo.deleteAttribute('normal');
+  const indexed = mergeVertices(rawGeo, 1e-3);
+  const ipos = indexed.attributes.position as THREE.BufferAttribute;
+  const j = makeRng(0xC0DE);
+  for (let i = 0; i < ipos.count; i++) {
+    const f = 0.78 + j() * 0.42;
+    ipos.setXYZ(i, ipos.getX(i) * f, ipos.getY(i) * f, ipos.getZ(i) * f);
+  }
+  const geo = indexed.toNonIndexed();
+  geo.computeVertexNormals();
+  rawGeo.dispose();
+  indexed.dispose();
+
+  const mat = new THREE.MeshStandardMaterial({
+    color: palette.rock,
+    roughness: 1.0,
+    metalness: 0.0,
+    flatShading: true,
+  });
+
+  // Vein centers. Number scales with map size so big maps don't feel sparse.
+  const mapSize = p.outerRadius - p.innerRadius;
+  const veinCount = Math.max(5, Math.round(mapSize / 6));
+  interface Vein { x: number; z: number; spread: number; weight: number; boulder: boolean }
+  const veins: Vein[] = [];
+  for (let i = 0; i < veinCount; i++) {
+    const [vx, vz] = sampleRadial(rng, p.innerRadius + 1, p.outerRadius - 2);
+    veins.push({
+      x: vx,
+      z: vz,
+      spread: 2 + rng() * 4,
+      // Zipf weighting: first vein dominates, later ones taper off — gives a
+      // small number of "rich" veins and many "sparse" ones.
+      weight: 1 / (i + 1),
+      boulder: rng() < 0.6,
+    });
+  }
+  const totalWeight = veins.reduce((s, v) => s + v.weight, 0);
+
+  // Pre-spawn boulder hills: each boulder vein gets one large boulder + 4-8
+  // smaller rocks clustered tightly. Big ones can be cave-mouth scale.
+  const allRocks: Array<{ x: number; z: number; size: number; squash: number }> = [];
+
+  const tryPush = (x: number, z: number, size: number, squash: number) => {
+    // Obstacle rejection on XZ plane — keep rocks out of huts + pillars.
+    // Use rock radius (size * 0.6) so big boulders don't kiss obstacle edges.
+    const rockR = size * 0.6;
+    for (const o of obstacles) {
+      const dx = x - o.x, dz = z - o.z;
+      if (dx * dx + dz * dz < (o.r + rockR) * (o.r + rockR)) return false;
+    }
+    allRocks.push({ x, z, size, squash });
+    return true;
+  };
+
+  for (const v of veins) {
+    if (!v.boulder) continue;
+    // Hill-scale boulders: 3.0–5.5 — significantly larger than before.
+    const bigSize = 3.0 + rng() * 2.5;
+    if (!tryPush(v.x, v.z, bigSize, 0.55 + rng() * 0.25)) continue;
+    const support = 4 + Math.floor(rng() * 5);
+    for (let k = 0; k < support; k++) {
+      const a = rng() * Math.PI * 2;
+      const r = bigSize * (0.35 + rng() * 0.75);
+      tryPush(
+        v.x + Math.cos(a) * r,
+        v.z + Math.sin(a) * r,
+        bigSize * (0.25 + rng() * 0.4),
+        0.5 + rng() * 0.5,
+      );
+    }
+  }
+
+  // Distributed small rocks around veins (power-law size). Promote a fraction
+  // to mid-size so the field has visible medium boulders too.
+  const remaining = Math.max(0, p.rockCount - allRocks.length);
+  let placed = 0;
+  let attempts = 0;
+  while (placed < remaining && attempts < remaining * 6) {
+    attempts++;
+    let x: number, z: number, size: number;
+    if (rng() < 0.15) {
+      [x, z] = sampleRadial(rng, p.innerRadius + 1, p.outerRadius);
+    } else {
+      let pick = rng() * totalWeight;
+      let chosen = veins[0];
+      for (const v of veins) { pick -= v.weight; if (pick <= 0) { chosen = v; break; } }
+      const a = rng() * Math.PI * 2;
+      const r = Math.abs(gaussian(rng)) * chosen.spread;
+      x = chosen.x + Math.cos(a) * r;
+      z = chosen.z + Math.sin(a) * r;
+    }
+    size = paretoSize(rng) * p.rockScale;
+    // 8% of "normal" rocks promoted to medium boulder size.
+    if (rng() < 0.08) size = Math.max(size, 1.6 + rng() * 1.0);
+    if (tryPush(x, z, size, 0.5 + rng() * 0.5)) placed++;
+  }
+
+  // Pack into a single InstancedMesh for perf.
+  const mesh = new THREE.InstancedMesh(geo, mat, allRocks.length);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+
+  const tmpMatrix = new THREE.Matrix4();
+  const tmpQuat = new THREE.Quaternion();
+  const tmpPos = new THREE.Vector3();
+  const tmpScale = new THREE.Vector3();
+  // Icosahedron radius pre-scale; after scaling by `size`, bottom is at
+  // `-size * baseRadius * squash`. Lift so the bottom rests on the terrain
+  // (with a small sink for large boulders so they read as embedded hills).
+  const BASE_ROCK_R = 0.35;
+  for (let i = 0; i < allRocks.length; i++) {
+    const r = allRocks[i];
+    const halfH = r.size * BASE_ROCK_R * r.squash;
+    const sink = r.size > 2 ? halfH * 0.30 : 0; // big rocks half-buried slightly
+    const y = height(r.x, r.z) + halfH - sink;
+    tmpPos.set(r.x, y, r.z);
+    tmpScale.set(r.size, r.size * r.squash, r.size);
+    tmpQuat.setFromEuler(new THREE.Euler(rng() * 0.4, rng() * Math.PI * 2, rng() * 0.4));
+    tmpMatrix.compose(tmpPos, tmpQuat, tmpScale);
+    mesh.setMatrixAt(i, tmpMatrix);
+  }
+  mesh.instanceMatrix.needsUpdate = true;
+  group.add(mesh);
+
+  // Per-rock cylinder collider (derived from the icosahedron's scaled radius).
+  // Only register rocks above a threshold — tiny pebbles shouldn't block
+  // movement (they'd feel like invisible walls). Climbable, with topY set
+  // from the rock's terrain-relative placement so the player can stand on
+  // medium and large boulders.
+  const ROCK_COLLIDE_MIN_SIZE = 0.9;
+  const colliders: Collider[] = [];
+  for (const r of allRocks) {
+    if (r.size < ROCK_COLLIDE_MIN_SIZE) continue;
+    const halfH = r.size * BASE_ROCK_R * r.squash;
+    const sink = r.size > 2 ? halfH * 0.30 : 0;
+    const baseY = height(r.x, r.z) - sink;        // bottom of the visible rock
+    const topY = baseY + 2 * halfH;
+    colliders.push({
+      type: 'cylinder',
+      x: r.x,
+      z: r.z,
+      radius: r.size * BASE_ROCK_R * 0.9,
+      height: topY,                                // collider extends from y=0 up to topY (good enough)
+      topY,
+      climbable: true,
+    });
+  }
+  group.userData.colliders = colliders;
+  return group;
+}
+
+/** Pareto-distributed rock size — most ~0.5, occasional outliers up to ~3. */
+function paretoSize(rng: () => number): number {
+  // Sample u in (0,1); inverse-CDF of Pareto with xm=0.5, alpha=1.7.
+  const u = Math.max(0.0001, rng());
+  const xm = 0.5;
+  const alpha = 1.7;
+  return Math.min(4.0, xm / Math.pow(u, 1 / alpha));
+}
+
+/** Box-Muller transform — standard normal in [-∞, ∞], typically ~[-3, 3]. */
+function gaussian(rng: () => number): number {
+  const u1 = Math.max(1e-9, rng());
+  const u2 = rng();
+  return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+}
+
+function buildMushrooms(
+  rng: () => number,
+  p: EcosystemParams,
+  palette: Palette,
+  height: (x: number, z: number) => number,
+): THREE.Object3D {
+  const group = new THREE.Group();
+  group.name = 'Mushrooms';
+
+  const stemGeo = new THREE.CylinderGeometry(0.05, 0.07, 0.2, 6);
+  stemGeo.translate(0, 0.1, 0);
+  const stemMat = new THREE.MeshLambertMaterial({ color: palette.mushroomStem });
+  const stems = new THREE.InstancedMesh(stemGeo, stemMat, p.mushroomCount);
+  stems.name = 'MushroomStems';
+  stems.castShadow = true;
+
+  const capGeo = new THREE.SphereGeometry(0.13, 8, 5, 0, Math.PI * 2, 0, Math.PI / 2);
+  capGeo.translate(0, 0.2, 0);
+  const capMat = new THREE.MeshLambertMaterial({ color: palette.mushroomCap });
+  const caps = new THREE.InstancedMesh(capGeo, capMat, p.mushroomCount);
+  caps.name = 'MushroomCaps';
+  caps.castShadow = true;
+
+  const tmpMatrix = new THREE.Matrix4();
+  const tmpQuat = new THREE.Quaternion();
+  const tmpPos = new THREE.Vector3();
+  const tmpScale = new THREE.Vector3();
+  for (let i = 0; i < p.mushroomCount; i++) {
+    const [x, z] = sampleRadial(rng, p.innerRadius + 1, p.outerRadius);
+    const y = height(x, z);
+    const s = 0.7 + rng() * 1.0;
+    tmpPos.set(x, y, z);
+    tmpScale.set(s, s, s);
+    tmpQuat.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rng() * Math.PI * 2);
+    tmpMatrix.compose(tmpPos, tmpQuat, tmpScale);
+    stems.setMatrixAt(i, tmpMatrix);
+    caps.setMatrixAt(i, tmpMatrix);
+  }
+  stems.instanceMatrix.needsUpdate = true;
+  caps.instanceMatrix.needsUpdate = true;
+  group.add(stems);
+  group.add(caps);
+  return group;
+}
+
+function buildHuts(
+  rng: () => number,
+  p: EcosystemParams,
+  palette: Palette,
+  height: (x: number, z: number) => number,
+): THREE.Object3D {
+  const group = new THREE.Group();
+  group.name = 'Huts';
+
+  for (let i = 0; i < p.hutCount; i++) {
+    // Huts sit just outside the combat zone, well inside the tree line.
+    const [x, z] = sampleRadial(rng, p.innerRadius + 4, p.outerRadius - 8);
+    const y = height(x, z);
+    const hut = buildSingleHut(palette, rng);
+    hut.name = `Hut_${i}`;
+    hut.position.set(x, y, z);
+    hut.rotation.y = rng() * Math.PI * 2;
+    const s = 0.9 + rng() * 0.5;
+    hut.scale.setScalar(s);
+    group.add(hut);
+  }
+  return group;
+}
+
+// Hitbox derives directly from these primitive dimensions so collisions
+// match what the player sees.
+const HUT_WALL_RADIUS = 1.6;
+const HUT_WALL_BOTTOM_RADIUS = 1.75;
+const HUT_WALL_HEIGHT = 2.2;
+const HUT_ROOF_RADIUS = 2.2;
+const HUT_ROOF_HEIGHT = 1.7;
+
+function buildSingleHut(palette: Palette, rng: () => number): THREE.Group {
+  const hut = new THREE.Group();
+
+  // Walls: octagonal cylinder (looks more hand-built than a square).
+  const wallGeo = new THREE.CylinderGeometry(HUT_WALL_RADIUS, HUT_WALL_BOTTOM_RADIUS, HUT_WALL_HEIGHT, 8);
+  const wallMat = new THREE.MeshStandardMaterial({
+    color: palette.hutWall,
+    roughness: 0.95,
+    flatShading: true,
+  });
+  const walls = new THREE.Mesh(wallGeo, wallMat);
+  walls.position.y = HUT_WALL_HEIGHT / 2;
+  walls.castShadow = true;
+  walls.receiveShadow = true;
+  walls.name = 'Walls';
+  hut.add(walls);
+
+  // Conical thatched roof.
+  const roofGeo = new THREE.ConeGeometry(HUT_ROOF_RADIUS, HUT_ROOF_HEIGHT, 8);
+  const roofMat = new THREE.MeshStandardMaterial({
+    color: palette.hutRoof,
+    roughness: 1.0,
+    flatShading: true,
+  });
+  const roof = new THREE.Mesh(roofGeo, roofMat);
+  roof.position.y = HUT_WALL_HEIGHT + HUT_ROOF_HEIGHT / 2;
+  roof.castShadow = true;
+  roof.name = 'Roof';
+  hut.add(roof);
+
+  // Doorway: dark slab in front
+  const doorGeo = new THREE.PlaneGeometry(0.85, 1.3);
+  const doorMat = new THREE.MeshBasicMaterial({ color: 0x1a1208, side: THREE.DoubleSide });
+  const door = new THREE.Mesh(doorGeo, doorMat);
+  door.position.set(0, 0.65, HUT_WALL_RADIUS + 0.01);
+  door.name = 'Door';
+  hut.add(door);
+
+  // Random chimney smoke puff (a simple light sphere) ~30% of huts
+  if (rng() < 0.3) {
+    const puffGeo = new THREE.SphereGeometry(0.32, 8, 6);
+    const puffMat = new THREE.MeshBasicMaterial({ color: 0xd8d8d8, transparent: true, opacity: 0.6 });
+    const puff = new THREE.Mesh(puffGeo, puffMat);
+    puff.position.set(0.5, HUT_WALL_HEIGHT + HUT_ROOF_HEIGHT + 0.4, 0.0);
+    puff.name = 'Smoke';
+    hut.add(puff);
+  }
+
+  // Record collider derived from the wall primitive (scaled by the hut's
+  // scale at placement time). Consumed by getColliders() below.
+  hut.userData.collider = {
+    type: 'cylinder' as const,
+    radius: HUT_WALL_BOTTOM_RADIUS,
+    height: HUT_WALL_HEIGHT,
+  };
+  return hut;
+}
+
+function disposeDeep(obj: THREE.Object3D): void {
+  obj.traverse(o => {
+    const m = o as THREE.Mesh;
+    if (m.geometry) m.geometry.dispose();
+    const mat = m.material as THREE.Material | THREE.Material[] | undefined;
+    if (Array.isArray(mat)) mat.forEach(x => x.dispose());
+    else if (mat) mat.dispose();
+  });
+}
