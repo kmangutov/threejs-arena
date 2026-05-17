@@ -42,6 +42,7 @@ import { ProceduralTree } from './proceduralTree';
 import { ColliderDebug } from './collider-debug';
 import { WolfPack } from './wolves';
 import { Rivers } from './rivers';
+import { HpBarOverlay } from './hp-bars';
 
 // ============================================================================
 // Character Factory
@@ -102,6 +103,7 @@ interface GameState {
   colliderDebug: ColliderDebug;
   rivers: Rivers;
   wolves: WolfPack;
+  hpBars: HpBarOverlay;
 
   // Phase 4: Network state
   mode: GameMode;
@@ -867,6 +869,7 @@ async function init(): Promise<GameState> {
     colliderDebug: undefined as unknown as ColliderDebug,
     rivers,
     wolves: undefined as unknown as WolfPack,
+    hpBars: undefined as unknown as HpBarOverlay,
   };
 
   // Dev tools: editor (`), snapshots (F2/F3), collider debug (F4)
@@ -896,13 +899,16 @@ async function init(): Promise<GameState> {
   // player abilities).
   state.wolves = new WolfPack(
     scene,
-    4,
+    5,
     18,
     terrainData,
-    state.rabbits,
+    [state.rabbits, state.cats, state.cows],
     state.damageSplats,
     new THREE.Vector3(-14, 0, -14),
   );
+
+  // Floating HP bars over wounded prey (any animal the wolves have hit).
+  state.hpBars = new HpBarOverlay(scene, [state.rabbits, state.cats, state.cows]);
 
   setupInput(state);
   updateActionBar(state);
@@ -1043,6 +1049,7 @@ function animateStandalone(state: GameState, delta: number): void {
   state.ecosystem.update(state.clock.elapsedTime);
   state.rivers.update(state.clock.elapsedTime);
   state.wolves.update(delta);
+  state.hpBars.update();
   state.colliderDebug.update();
   updateGrassActors(state);
 
@@ -1116,6 +1123,7 @@ function animateMultiplayer(state: GameState, delta: number): void {
   state.ecosystem.update(state.clock.elapsedTime);
   state.rivers.update(state.clock.elapsedTime);
   state.wolves.update(delta);
+  state.hpBars.update();
   state.colliderDebug.update();
   updateGrassActors(state);
 

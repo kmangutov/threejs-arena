@@ -93,6 +93,48 @@ if (args.dencam) {
   await new Promise(r => setTimeout(r, 700));
 }
 
+if (args.dumpwolves) {
+  // Print wolf states so we can verify hunt/attack flow without a UI.
+  const dump = await page.evaluate(() => {
+    const g = (window).__game;
+    const wolves = g.wolves;
+    if (!wolves) return 'no wolves';
+    const arr = (wolves).wolves;
+    return arr.map((w, i) => ({
+      i,
+      state: w.state,
+      pos: [Math.round(w.pos.x), Math.round(w.pos.z)],
+      hasPrey: !!w.prey,
+      preyHp: w.prey ? Math.round(w.prey.hp) : null,
+    }));
+  });
+  console.log('[wolves]', JSON.stringify(dump, null, 2));
+}
+
+if (args.combatcam) {
+  // Find a wolf that's actively attacking and frame around its prey.
+  await page.evaluate(() => {
+    const g = (window).__game;
+    if (!g) return;
+    const arr = (g.wolves).wolves;
+    // Prefer a wolf in attack state; fall back to hunt; fall back to first.
+    let target = arr.find(w => w.state === 'attack')
+              || arr.find(w => w.state === 'hunt')
+              || arr[0];
+    if (!target) return;
+    const px = target.prey ? target.prey.pos.x : target.pos.x;
+    const pz = target.prey ? target.prey.pos.z : target.pos.z;
+    g.player.position.set(px, 0, pz);
+    g.cameraRig.targetDistance = 6;
+    g.cameraRig.currentDistance = 6;
+    g.cameraRig.targetPitch = 0.45;
+    g.cameraRig.currentPitch = 0.45;
+    g.cameraRig.targetYaw = 0.6;
+    g.cameraRig.currentYaw = 0.6;
+  });
+  await new Promise(r => setTimeout(r, 500));
+}
+
 if (args.rivercam) {
   // Top-down high-altitude view to show both river ribbons.
   await page.evaluate(() => {

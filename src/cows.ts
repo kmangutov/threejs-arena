@@ -7,6 +7,8 @@
 import * as THREE from 'three';
 import { getTerrainHeight } from './terrain';
 import { Holdable, HoldableProvider } from './holdable';
+import type { PreyRef, PreyProvider, PreyState } from './prey';
+import { makePreyState } from './prey';
 
 const WALK_SPEED = 1.0;
 const TURN_RATE = 1.6;
@@ -41,6 +43,7 @@ interface Cow {
   heightData: Uint8Array | null;
   held: boolean;
   mooCooldown: number;
+  prey: PreyState;
 }
 
 interface MooBubble {
@@ -272,17 +275,20 @@ function pickTarget(bounds: number): THREE.Vector3 {
   );
 }
 
-export class CowHerd implements HoldableProvider {
+export class CowHerd implements HoldableProvider, PreyProvider {
   private cows: Cow[] = [];
   private group: THREE.Group;
   private bounds: number;
   private heightData: Uint8Array | null;
   private moos: MooBubble[] = [];
   private scene: THREE.Scene;
+  private targetCount: number;
+  private respawnTimer = 8;
 
   constructor(scene: THREE.Scene, count: number, bounds: number, heightData: Uint8Array | null) {
     this.bounds = bounds;
     this.heightData = heightData;
+    this.targetCount = count;
     this.scene = scene;
     this.group = new THREE.Group();
     this.group.name = 'CowHerd';
@@ -304,7 +310,8 @@ export class CowHerd implements HoldableProvider {
       bounds: this.bounds,
       heightData: this.heightData,
       held: false,
-      mooCooldown: MOO_INITIAL_DELAY[0] + Math.random() * (MOO_INITIAL_DELAY[1] - MOO_INITIAL_DELAY[0])
+      mooCooldown: MOO_INITIAL_DELAY[0] + Math.random() * (MOO_INITIAL_DELAY[1] - MOO_INITIAL_DELAY[0]),
+      prey: makePreyState(120),       // cows are tanky
     };
     parts.group.position.copy(start);
     parts.group.rotation.y = cow.yaw;
@@ -315,6 +322,18 @@ export class CowHerd implements HoldableProvider {
   update(delta: number): void {
     for (const cow of this.cows) {
       if (cow.held) continue;
+      if (cow.prey.dead) {
+        cow.prey.deadTimer += delta;
+        if (cow.prey.deadTimer > 8) {
+          this.group.remove(cow.parts.group);
+          const idx = this.cows.indexOf(cow);
+          if (idx >= 0) this.cows.splice(idx, 1);
+        } else if (cow.prey.deadTimer > 4) {
+          const t = (cow.prey.deadTimer - 4) / 4;
+          cow.parts.group.scale.setScalar(1 - t);
+        }
+        continue;
+      }
       this.updateCow(cow, delta);
       cow.mooCooldown -= delta;
       if (cow.mooCooldown <= 0) {
@@ -323,6 +342,62 @@ export class CowHerd implements HoldableProvider {
       }
     }
     this.updateMoos(delta);
+    this.respawnTimer -= delta;
+    if (this.respawnTimer <= 0 && this.cows.length < this.targetCount) {
+      this.spawnCow();
+      this.respawnTimer = 12 + Math.random() * 6;
+    }
+  }
+
+  findNearestPrey(pos: THREE.Vector3, maxDist: number): PreyRef | null {
+    let best: Cow | null = null;
+    let bestSq = maxDist * maxDist;
+    for (const c of this.cows) {
+      if (c.held || c.prey.dead) continue;
+      const dx = c.pos.x - pos.x;
+      const dz = c.pos.z - pos.z;
+      const d = dx * dx + dz * dz;
+      if (d < bestSq) { bestSq = d; best = c; }
+    }
+    if (!best) return null;
+    return this.makePreyRef(best);
+  }
+
+  private makePreyRef(c: Cow): PreyRef {
+    return {
+      mesh: c.parts.group,
+      get pos() { return c.pos; },
+      get alive() { return !c.prey.dead; },
+      get hp() { return c.prey.hp; },
+      get maxHp() { return c.prey.maxHp; },
+      damage: (amount: number) => {
+        if (c.prey.dead) return false;
+        c.prey.hp -= amount;
+        c.prey.lastHitAt = performance.now();
+        if (c.prey.hp <= 0) {
+          c.prey.hp = 0;
+          c.prey.dead = true;
+          c.parts.group.rotation.x = Math.PI / 2 * 0.9;
+          return true;
+        }
+        return false;
+      },
+      scare: (fromX, fromZ, durMs) => {
+        if (c.prey.dead) return;
+        c.prey.fleeUntil = performance.now() + durMs;
+        c.prey.fleeFromX = fromX;
+        c.prey.fleeFromZ = fromZ;
+        // Cows are slow; nudge their target away.
+        const dx = c.pos.x - fromX, dz = c.pos.z - fromZ;
+        const d = Math.hypot(dx, dz) || 1;
+        c.target.set(c.pos.x + dx / d * 4, 0, c.pos.z + dz / d * 4);
+        c.pauseTimer = 0;
+      },
+    };
+  }
+
+  forEachPrey(fn: (ref: PreyRef) => void): void {
+    for (const c of this.cows) if (!c.held && !c.prey.dead) fn(this.makePreyRef(c));
   }
 
   private spawnMoo(cow: Cow): void {

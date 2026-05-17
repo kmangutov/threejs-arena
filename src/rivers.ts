@@ -29,10 +29,10 @@ export interface RiverParams {
 export const DEFAULT_RIVER_PARAMS: RiverParams = {
   seed: 7,
   riverCount: 2,
-  width: 2.4,
-  segments: 96,
-  span: 90,
-  meander: 12,
+  width: 6.5,             // wide enough to read as a real river, not a creek
+  segments: 120,
+  span: 110,              // run well past the map edge
+  meander: 18,            // bigger curves so the river feels geographic
   shallowColor: 0x6ec0c8,
   deepColor: 0x163b56,
   flowSpeed: 0.25,
@@ -139,9 +139,13 @@ export class Rivers extends THREE.Group {
     });
 
     const rng = mulberry32(p.seed);
+    const bankMat = new THREE.MeshLambertMaterial({
+      color: 0xc7a87a,    // sandy beige
+      side: THREE.DoubleSide,
+    });
     for (let i = 0; i < p.riverCount; i++) {
-      const ribbon = buildRiverRibbon(rng, p, this.heightSampler, this.material);
-      this.add(ribbon);
+      const built = buildRiverRibbon(rng, p, this.heightSampler, this.material, bankMat);
+      this.add(built);
     }
   }
 }
@@ -161,7 +165,8 @@ function buildRiverRibbon(
   p: RiverParams,
   height: (x: number, z: number) => number,
   material: THREE.ShaderMaterial,
-): THREE.Mesh {
+  bankMat: THREE.Material,
+): THREE.Group {
   // Random crossing chord across the map: pick two angles on a bounding
   // circle, draw a smooth curve between them with meandering control points.
   const radius = p.span * 0.5;
@@ -243,8 +248,61 @@ function buildRiverRibbon(
   geo.setIndex(indices);
   geo.computeVertexNormals();
 
-  const mesh = new THREE.Mesh(geo, material);
-  mesh.name = 'River';
-  mesh.renderOrder = -1;
-  return mesh;
+  const water = new THREE.Mesh(geo, material);
+  water.name = 'RiverWater';
+  water.renderOrder = -1;
+
+  // Sandy banks: a wider strip following the same curve, sitting flush with
+  // terrain. Two side-strips (one per bank) drawn just outside the water
+  // edges. Gives the river a visible silhouette from any angle.
+  const bankWidth = p.width * 0.45;
+  const bankL = buildBankStrip(curve, p.segments, -p.width * 0.5 - bankWidth * 0.5, bankWidth, height);
+  const bankR = buildBankStrip(curve, p.segments, p.width * 0.5 + bankWidth * 0.5, bankWidth, height);
+
+  const group = new THREE.Group();
+  group.name = 'River';
+  group.add(new THREE.Mesh(bankL, bankMat));
+  group.add(new THREE.Mesh(bankR, bankMat));
+  group.add(water);
+  return group;
+}
+
+/** Build a flat strip following the curve, offset sideways from the centerline. */
+function buildBankStrip(
+  curve: THREE.CatmullRomCurve3,
+  segments: number,
+  offset: number,
+  width: number,
+  height: (x: number, z: number) => number,
+): THREE.BufferGeometry {
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+  const Y = 0.04;
+  for (let i = 0; i <= segments; i++) {
+    const t = i / segments;
+    const pos = curve.getPoint(t);
+    const tan = curve.getTangent(t);
+    const side = new THREE.Vector3(-tan.z, 0, tan.x).normalize();
+    const center = pos.clone().addScaledVector(side, offset);
+    const inner = center.clone().addScaledVector(side, -width * 0.5);
+    const outer = center.clone().addScaledVector(side, width * 0.5);
+    // Hug terrain so the bank sits on the ground.
+    const ih = height(inner.x, inner.z);
+    const oh = height(outer.x, outer.z);
+    positions.push(inner.x, ih + Y, inner.z);
+    positions.push(outer.x, oh + Y, outer.z);
+    uvs.push(0, t * 6, 1, t * 6);
+    if (i < segments) {
+      const a = i * 2;
+      indices.push(a, a + 1, a + 2);
+      indices.push(a + 2, a + 1, a + 3);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  return geo;
 }

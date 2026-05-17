@@ -7,6 +7,8 @@
 import * as THREE from 'three';
 import { getTerrainHeight } from './terrain';
 import { Holdable, HoldableProvider } from './holdable';
+import type { PreyRef, PreyProvider, PreyState } from './prey';
+import { makePreyState } from './prey';
 
 const WALK_SPEED = 1.4;
 const TURN_RATE = 2.6;
@@ -42,6 +44,7 @@ interface Cat {
   bounds: number;
   heightData: Uint8Array | null;
   held: boolean;
+  prey: PreyState;
 }
 
 function buildCatMesh(): CatParts {
@@ -173,15 +176,18 @@ function pickTarget(bounds: number): THREE.Vector3 {
   );
 }
 
-export class CatColony implements HoldableProvider {
+export class CatColony implements HoldableProvider, PreyProvider {
   private cats: Cat[] = [];
   private group: THREE.Group;
   private bounds: number;
   private heightData: Uint8Array | null;
+  private targetCount: number;
+  private respawnTimer = 6;
 
   constructor(scene: THREE.Scene, count: number, bounds: number, heightData: Uint8Array | null) {
     this.bounds = bounds;
     this.heightData = heightData;
+    this.targetCount = count;
     this.group = new THREE.Group();
     this.group.name = 'CatColony';
     scene.add(this.group);
@@ -201,7 +207,8 @@ export class CatColony implements HoldableProvider {
       walkPhase: Math.random() * Math.PI * 2,
       bounds: this.bounds,
       heightData: this.heightData,
-      held: false
+      held: false,
+      prey: makePreyState(45),
     };
     parts.group.position.copy(start);
     parts.group.rotation.y = cat.yaw;
@@ -212,8 +219,76 @@ export class CatColony implements HoldableProvider {
   update(delta: number): void {
     for (const cat of this.cats) {
       if (cat.held) continue;
+      if (cat.prey.dead) {
+        cat.prey.deadTimer += delta;
+        if (cat.prey.deadTimer > 6) {
+          this.group.remove(cat.parts.group);
+          const idx = this.cats.indexOf(cat);
+          if (idx >= 0) this.cats.splice(idx, 1);
+        } else if (cat.prey.deadTimer > 3) {
+          const t = (cat.prey.deadTimer - 3) / 3;
+          cat.parts.group.scale.setScalar(1 - t);
+        }
+        continue;
+      }
       this.updateCat(cat, delta);
     }
+    this.respawnTimer -= delta;
+    if (this.respawnTimer <= 0 && this.cats.length < this.targetCount) {
+      this.spawnCat();
+      this.respawnTimer = 8 + Math.random() * 4;
+    }
+  }
+
+  findNearestPrey(pos: THREE.Vector3, maxDist: number): PreyRef | null {
+    let best: Cat | null = null;
+    let bestSq = maxDist * maxDist;
+    for (const c of this.cats) {
+      if (c.held || c.prey.dead) continue;
+      const dx = c.pos.x - pos.x;
+      const dz = c.pos.z - pos.z;
+      const d = dx * dx + dz * dz;
+      if (d < bestSq) { bestSq = d; best = c; }
+    }
+    if (!best) return null;
+    return this.makePreyRef(best);
+  }
+
+  private makePreyRef(c: Cat): PreyRef {
+    return {
+      mesh: c.parts.group,
+      get pos() { return c.pos; },
+      get alive() { return !c.prey.dead; },
+      get hp() { return c.prey.hp; },
+      get maxHp() { return c.prey.maxHp; },
+      damage: (amount: number) => {
+        if (c.prey.dead) return false;
+        c.prey.hp -= amount;
+        c.prey.lastHitAt = performance.now();
+        if (c.prey.hp <= 0) {
+          c.prey.hp = 0;
+          c.prey.dead = true;
+          c.parts.group.rotation.x = Math.PI / 2 * 0.9;
+          return true;
+        }
+        return false;
+      },
+      scare: (fromX, fromZ, durMs) => {
+        if (c.prey.dead) return;
+        c.prey.fleeUntil = performance.now() + durMs;
+        c.prey.fleeFromX = fromX;
+        c.prey.fleeFromZ = fromZ;
+        // Cats sprint short bursts: instantly pick a target away.
+        const dx = c.pos.x - fromX, dz = c.pos.z - fromZ;
+        const d = Math.hypot(dx, dz) || 1;
+        c.target.set(c.pos.x + dx / d * 6, 0, c.pos.z + dz / d * 6);
+        c.pauseTimer = 0;
+      },
+    };
+  }
+
+  forEachPrey(fn: (ref: PreyRef) => void): void {
+    for (const c of this.cats) if (!c.held && !c.prey.dead) fn(this.makePreyRef(c));
   }
 
   findNearestHoldable(pos: THREE.Vector3, maxDist: number): Holdable | null {

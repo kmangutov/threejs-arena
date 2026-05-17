@@ -36,6 +36,9 @@ interface RabbitParts {
 
 type RabbitState = 'hop' | 'rest' | 'stopped';
 
+import type { PreyRef, PreyProvider, PreyState } from './prey';
+import { makePreyState } from './prey';
+
 interface Rabbit {
   parts: RabbitParts;
   pos: THREE.Vector3;
@@ -47,24 +50,7 @@ interface Rabbit {
   bounds: number;
   heightData: Uint8Array | null;
   held: boolean;
-  // Combat: predators (wolves) can hunt and kill rabbits.
-  hp: number;
-  maxHp: number;
-  dead: boolean;
-  // Flee state: when threatened, rabbit hops away from threat for a moment.
-  fleeUntil: number;      // ms timestamp
-  fleeFromX: number;
-  fleeFromZ: number;
-}
-
-/** Public-facing prey reference for predators (wolves). */
-export interface PreyRef {
-  mesh: THREE.Object3D;
-  get pos(): THREE.Vector3;
-  get alive(): boolean;
-  get hp(): number;
-  damage(amount: number): boolean; // returns true if this hit killed the prey
-  scare(fromX: number, fromZ: number, durationMs: number): void;
+  prey: PreyState;
 }
 
 function buildRabbitMesh(): RabbitParts {
@@ -184,15 +170,18 @@ function pickTarget(bounds: number): THREE.Vector3 {
   );
 }
 
-export class RabbitWarren implements HoldableProvider {
+export class RabbitWarren implements HoldableProvider, PreyProvider {
   private rabbits: Rabbit[] = [];
   private group: THREE.Group;
   private bounds: number;
   private heightData: Uint8Array | null;
+  private targetCount: number;
+  private respawnTimer = 4;
 
   constructor(scene: THREE.Scene, count: number, bounds: number, heightData: Uint8Array | null) {
     this.bounds = bounds;
     this.heightData = heightData;
+    this.targetCount = count;
     this.group = new THREE.Group();
     this.group.name = 'RabbitWarren';
     scene.add(this.group);
@@ -216,12 +205,7 @@ export class RabbitWarren implements HoldableProvider {
       bounds: this.bounds,
       heightData: this.heightData,
       held: false,
-      hp: 30,
-      maxHp: 30,
-      dead: false,
-      fleeUntil: 0,
-      fleeFromX: 0,
-      fleeFromZ: 0,
+      prey: makePreyState(30),
     };
     parts.group.position.copy(start);
     parts.group.rotation.y = rabbit.yaw;
@@ -232,24 +216,25 @@ export class RabbitWarren implements HoldableProvider {
   update(delta: number): void {
     for (const r of this.rabbits) {
       if (r.held) continue;
-      if (r.dead) {
+      if (r.prey.dead) {
         this.updateDead(r, delta);
         continue;
       }
       this.updateRabbit(r, delta);
     }
+    // Slow respawn: keep the warren topped up so wolves always have prey.
+    this.respawnTimer -= delta;
+    if (this.respawnTimer <= 0 && this.rabbits.length < this.targetCount) {
+      this.spawnRabbit();
+      this.respawnTimer = 4 + Math.random() * 4;
+    }
   }
 
-  /**
-   * Find the closest LIVING rabbit to a position (used by wolf hunters).
-   * Returns a stable PreyRef the predator can damage/scare without coupling
-   * to the internal Rabbit struct.
-   */
   findNearestPrey(pos: THREE.Vector3, maxDist: number): PreyRef | null {
     let best: Rabbit | null = null;
     let bestSq = maxDist * maxDist;
     for (const r of this.rabbits) {
-      if (r.dead || r.held) continue;
+      if (r.prey.dead || r.held) continue;
       const dx = r.pos.x - pos.x;
       const dz = r.pos.z - pos.z;
       const d = dx * dx + dz * dz;
@@ -263,46 +248,49 @@ export class RabbitWarren implements HoldableProvider {
     return {
       mesh: r.parts.group,
       get pos() { return r.pos; },
-      get alive() { return !r.dead; },
-      get hp() { return r.hp; },
+      get alive() { return !r.prey.dead; },
+      get hp() { return r.prey.hp; },
+      get maxHp() { return r.prey.maxHp; },
       damage: (amount: number) => {
-        if (r.dead) return false;
-        r.hp -= amount;
-        if (r.hp <= 0) {
-          r.hp = 0;
-          r.dead = true;
-          // Death pose: flop sideways, settle to terrain.
+        if (r.prey.dead) return false;
+        r.prey.hp -= amount;
+        r.prey.lastHitAt = performance.now();
+        if (r.prey.hp <= 0) {
+          r.prey.hp = 0;
+          r.prey.dead = true;
           r.parts.group.rotation.x = Math.PI / 2 * 0.9;
           return true;
         }
         return false;
       },
       scare: (fromX: number, fromZ: number, durationMs: number) => {
-        if (r.dead) return;
-        r.fleeUntil = performance.now() + durationMs;
-        r.fleeFromX = fromX;
-        r.fleeFromZ = fromZ;
+        if (r.prey.dead) return;
+        r.prey.fleeUntil = performance.now() + durationMs;
+        r.prey.fleeFromX = fromX;
+        r.prey.fleeFromZ = fromZ;
       },
     };
   }
 
-  /**
-   * Dead rabbits: shrink + sink for a few seconds, then despawn entirely so
-   * the warren doesn't bloat with corpses.
-   */
+  /** Iterate over all living prey refs (used by the HP-bar overlay). */
+  forEachPrey(fn: (ref: PreyRef) => void): void {
+    for (const r of this.rabbits) {
+      if (!r.held && !r.prey.dead) fn(this.makePreyRef(r));
+    }
+  }
+
   private updateDead(r: Rabbit, delta: number): void {
-    r.stateTimer += delta;
-    const fadeStart = 3.0;          // wolves get time to "feed" first
+    r.prey.deadTimer += delta;
+    const fadeStart = 3.0;
     const fadeEnd = 6.0;
-    if (r.stateTimer >= fadeEnd) {
-      // Remove from scene + array.
+    if (r.prey.deadTimer >= fadeEnd) {
       this.group.remove(r.parts.group);
       const idx = this.rabbits.indexOf(r);
       if (idx >= 0) this.rabbits.splice(idx, 1);
       return;
     }
-    if (r.stateTimer > fadeStart) {
-      const t = (r.stateTimer - fadeStart) / (fadeEnd - fadeStart);
+    if (r.prey.deadTimer > fadeStart) {
+      const t = (r.prey.deadTimer - fadeStart) / (fadeEnd - fadeStart);
       r.parts.group.scale.setScalar(1 - t);
     }
   }
@@ -347,9 +335,9 @@ export class RabbitWarren implements HoldableProvider {
 
     // Flee: if a predator scared us recently, point target directly away
     // and force hop state. Wears off after fleeUntil expires.
-    if (r.fleeUntil > now) {
-      const dx = r.pos.x - r.fleeFromX;
-      const dz = r.pos.z - r.fleeFromZ;
+    if (r.prey.fleeUntil > now) {
+      const dx = r.pos.x - r.prey.fleeFromX;
+      const dz = r.pos.z - r.prey.fleeFromZ;
       const d = Math.hypot(dx, dz) || 1;
       const fleeDist = 8;
       r.target.set(

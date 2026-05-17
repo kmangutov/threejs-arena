@@ -13,7 +13,7 @@
 
 import * as THREE from 'three';
 import { getTerrainHeight } from './terrain';
-import type { RabbitWarren, PreyRef } from './rabbits';
+import type { PreyRef, PreyProvider } from './prey';
 import type { DamageSplatSystem } from './damage-splat';
 
 const WALK_SPEED = 1.8;
@@ -235,7 +235,7 @@ export class WolfPack {
   private denPos: THREE.Vector3;
   private bounds: number;
   private heightData: Uint8Array | null;
-  private warren: RabbitWarren;
+  private preyProviders: PreyProvider[];
   private splats: DamageSplatSystem;
 
   constructor(
@@ -243,13 +243,13 @@ export class WolfPack {
     count: number,
     bounds: number,
     heightData: Uint8Array | null,
-    warren: RabbitWarren,
+    preyProviders: PreyProvider[],
     splats: DamageSplatSystem,
     denPos: THREE.Vector3 = new THREE.Vector3(-14, 0, -14),
   ) {
     this.bounds = bounds;
     this.heightData = heightData;
-    this.warren = warren;
+    this.preyProviders = preyProviders;
     this.splats = splats;
     this.denPos = denPos.clone();
 
@@ -312,6 +312,21 @@ export class WolfPack {
     return this.wolves.map(w => w.pos);
   }
 
+  /** Query every prey provider and return the closest living prey. */
+  private findNearestPrey(pos: THREE.Vector3, maxDist: number): PreyRef | null {
+    let best: PreyRef | null = null;
+    let bestSq = maxDist * maxDist;
+    for (const prov of this.preyProviders) {
+      const candidate = prov.findNearestPrey(pos, maxDist);
+      if (!candidate) continue;
+      const dx = candidate.pos.x - pos.x;
+      const dz = candidate.pos.z - pos.z;
+      const d = dx * dx + dz * dz;
+      if (d < bestSq) { bestSq = d; best = candidate; }
+    }
+    return best;
+  }
+
   private updateWolf(wolf: Wolf, delta: number): void {
     // Cooldown decay
     if (wolf.attackTimer > 0) wolf.attackTimer = Math.max(0, wolf.attackTimer - delta);
@@ -319,7 +334,7 @@ export class WolfPack {
 
     // ----- prey acquisition / loss -----
     if (wolf.state === 'wander' || wolf.state === 'return') {
-      const prey = this.warren.findNearestPrey(wolf.pos, SCENT_RADIUS);
+      const prey = this.findNearestPrey(wolf.pos, SCENT_RADIUS);
       if (prey) {
         wolf.prey = prey;
         wolf.state = 'hunt';
@@ -455,7 +470,7 @@ export class WolfPack {
     // Passive scare aura: rabbits very close panic even without active hunt.
     // (Stored on the wolf so it doesn't spam; only when not already hunting it.)
     if (wolf.state !== 'hunt' && wolf.state !== 'attack') {
-      const passive = this.warren.findNearestPrey(wolf.pos, SCARE_RADIUS);
+      const passive = this.findNearestPrey(wolf.pos, SCARE_RADIUS);
       if (passive) passive.scare(wolf.pos.x, wolf.pos.z, 800);
     }
   }
