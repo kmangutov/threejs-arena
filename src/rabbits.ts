@@ -47,6 +47,24 @@ interface Rabbit {
   bounds: number;
   heightData: Uint8Array | null;
   held: boolean;
+  // Combat: predators (wolves) can hunt and kill rabbits.
+  hp: number;
+  maxHp: number;
+  dead: boolean;
+  // Flee state: when threatened, rabbit hops away from threat for a moment.
+  fleeUntil: number;      // ms timestamp
+  fleeFromX: number;
+  fleeFromZ: number;
+}
+
+/** Public-facing prey reference for predators (wolves). */
+export interface PreyRef {
+  mesh: THREE.Object3D;
+  get pos(): THREE.Vector3;
+  get alive(): boolean;
+  get hp(): number;
+  damage(amount: number): boolean; // returns true if this hit killed the prey
+  scare(fromX: number, fromZ: number, durationMs: number): void;
 }
 
 function buildRabbitMesh(): RabbitParts {
@@ -197,7 +215,13 @@ export class RabbitWarren implements HoldableProvider {
       hopPhase: 0,
       bounds: this.bounds,
       heightData: this.heightData,
-      held: false
+      held: false,
+      hp: 30,
+      maxHp: 30,
+      dead: false,
+      fleeUntil: 0,
+      fleeFromX: 0,
+      fleeFromZ: 0,
     };
     parts.group.position.copy(start);
     parts.group.rotation.y = rabbit.yaw;
@@ -208,7 +232,78 @@ export class RabbitWarren implements HoldableProvider {
   update(delta: number): void {
     for (const r of this.rabbits) {
       if (r.held) continue;
+      if (r.dead) {
+        this.updateDead(r, delta);
+        continue;
+      }
       this.updateRabbit(r, delta);
+    }
+  }
+
+  /**
+   * Find the closest LIVING rabbit to a position (used by wolf hunters).
+   * Returns a stable PreyRef the predator can damage/scare without coupling
+   * to the internal Rabbit struct.
+   */
+  findNearestPrey(pos: THREE.Vector3, maxDist: number): PreyRef | null {
+    let best: Rabbit | null = null;
+    let bestSq = maxDist * maxDist;
+    for (const r of this.rabbits) {
+      if (r.dead || r.held) continue;
+      const dx = r.pos.x - pos.x;
+      const dz = r.pos.z - pos.z;
+      const d = dx * dx + dz * dz;
+      if (d < bestSq) { bestSq = d; best = r; }
+    }
+    if (!best) return null;
+    return this.makePreyRef(best);
+  }
+
+  private makePreyRef(r: Rabbit): PreyRef {
+    return {
+      mesh: r.parts.group,
+      get pos() { return r.pos; },
+      get alive() { return !r.dead; },
+      get hp() { return r.hp; },
+      damage: (amount: number) => {
+        if (r.dead) return false;
+        r.hp -= amount;
+        if (r.hp <= 0) {
+          r.hp = 0;
+          r.dead = true;
+          // Death pose: flop sideways, settle to terrain.
+          r.parts.group.rotation.x = Math.PI / 2 * 0.9;
+          return true;
+        }
+        return false;
+      },
+      scare: (fromX: number, fromZ: number, durationMs: number) => {
+        if (r.dead) return;
+        r.fleeUntil = performance.now() + durationMs;
+        r.fleeFromX = fromX;
+        r.fleeFromZ = fromZ;
+      },
+    };
+  }
+
+  /**
+   * Dead rabbits: shrink + sink for a few seconds, then despawn entirely so
+   * the warren doesn't bloat with corpses.
+   */
+  private updateDead(r: Rabbit, delta: number): void {
+    r.stateTimer += delta;
+    const fadeStart = 3.0;          // wolves get time to "feed" first
+    const fadeEnd = 6.0;
+    if (r.stateTimer >= fadeEnd) {
+      // Remove from scene + array.
+      this.group.remove(r.parts.group);
+      const idx = this.rabbits.indexOf(r);
+      if (idx >= 0) this.rabbits.splice(idx, 1);
+      return;
+    }
+    if (r.stateTimer > fadeStart) {
+      const t = (r.stateTimer - fadeStart) / (fadeEnd - fadeStart);
+      r.parts.group.scale.setScalar(1 - t);
     }
   }
 
@@ -249,6 +344,25 @@ export class RabbitWarren implements HoldableProvider {
 
   private updateRabbit(r: Rabbit, delta: number): void {
     const now = performance.now();
+
+    // Flee: if a predator scared us recently, point target directly away
+    // and force hop state. Wears off after fleeUntil expires.
+    if (r.fleeUntil > now) {
+      const dx = r.pos.x - r.fleeFromX;
+      const dz = r.pos.z - r.fleeFromZ;
+      const d = Math.hypot(dx, dz) || 1;
+      const fleeDist = 8;
+      r.target.set(
+        Math.max(-r.bounds, Math.min(r.bounds, r.pos.x + (dx / d) * fleeDist)),
+        0,
+        Math.max(-r.bounds, Math.min(r.bounds, r.pos.z + (dz / d) * fleeDist)),
+      );
+      if (r.state === 'stopped' || r.state === 'rest') {
+        r.state = 'hop';
+        r.hopPhase = 0;
+        r.stateTimer = 0;
+      }
+    }
 
     // Steer (always face target if we're not deeply stopped)
     if (r.state !== 'stopped') {

@@ -40,6 +40,8 @@ import { Ecosystem } from './ecosystem';
 import { getTerrainHeight } from './terrain';
 import { ProceduralTree } from './proceduralTree';
 import { ColliderDebug } from './collider-debug';
+import { WolfPack } from './wolves';
+import { Rivers } from './rivers';
 
 // ============================================================================
 // Character Factory
@@ -98,6 +100,8 @@ interface GameState {
   snapshots: SnapshotSystem;
   ecosystem: Ecosystem;
   colliderDebug: ColliderDebug;
+  rivers: Rivers;
+  wolves: WolfPack;
 
   // Phase 4: Network state
   mode: GameMode;
@@ -691,6 +695,10 @@ async function init(): Promise<GameState> {
   );
   scene.add(ecosystem);
 
+  // Generative rivers — winding water ribbons crossing the terrain.
+  const rivers = new Rivers((x, z) => getTerrainHeight(x, z, terrainData));
+  scene.add(rivers);
+
   // A single procedural tree placed on the map as a tweakable showcase —
   // pickable in the SceneEditor with full param schema (seed, trunk height,
   // canopy scale, leaf puff, bend).
@@ -832,7 +840,7 @@ async function init(): Promise<GameState> {
     projectiles,
     damageSplats: new DamageSplatSystem(scene),
     dogs: new DogPack(scene, 6, 18, getTerrainHeightData()),
-    rabbits: new RabbitWarren(scene, 10, 18, getTerrainHeightData()),
+    rabbits: new RabbitWarren(scene, 14, 18, getTerrainHeightData()),
     cats: new CatColony(scene, 5, 18, getTerrainHeightData()),
     cows: new CowHerd(scene, 4, 18, getTerrainHeightData()),
     carrySlot: (() => {
@@ -857,6 +865,8 @@ async function init(): Promise<GameState> {
     snapshots: undefined as unknown as SnapshotSystem,
     ecosystem,
     colliderDebug: undefined as unknown as ColliderDebug,
+    rivers,
+    wolves: undefined as unknown as WolfPack,
   };
 
   // Dev tools: editor (`), snapshots (F2/F3), collider debug (F4)
@@ -881,6 +891,19 @@ async function init(): Promise<GameState> {
     refreshColliders();
   };
 
+  // Wolf pack — den at one corner of the map, wolves hunt rabbits with the
+  // shared DamageSplatSystem providing combat feedback (same pattern as
+  // player abilities).
+  state.wolves = new WolfPack(
+    scene,
+    4,
+    18,
+    terrainData,
+    state.rabbits,
+    state.damageSplats,
+    new THREE.Vector3(-14, 0, -14),
+  );
+
   setupInput(state);
   updateActionBar(state);
 
@@ -902,7 +925,7 @@ function updateGrassActors(state: GameState): void {
 
   // Collect candidate animal positions by walking the named pack groups.
   const playerPos = state.player.position;
-  const packs = ['DogPack', 'RabbitWarren', 'CatColony', 'CowHerd'];
+  const packs = ['DogPack', 'RabbitWarren', 'CatColony', 'CowHerd', 'WolfPack'];
   const tmp = new THREE.Vector3();
   for (const name of packs) {
     const pack = state.scene.getObjectByName(name);
@@ -1018,6 +1041,8 @@ function animateStandalone(state: GameState, delta: number): void {
   updateAutoAttack(state, delta);
   state.editor.update();
   state.ecosystem.update(state.clock.elapsedTime);
+  state.rivers.update(state.clock.elapsedTime);
+  state.wolves.update(delta);
   state.colliderDebug.update();
   updateGrassActors(state);
 
@@ -1089,6 +1114,8 @@ function animateMultiplayer(state: GameState, delta: number): void {
   updateCarrySlot(state);
   state.editor.update();
   state.ecosystem.update(state.clock.elapsedTime);
+  state.rivers.update(state.clock.elapsedTime);
+  state.wolves.update(delta);
   state.colliderDebug.update();
   updateGrassActors(state);
 

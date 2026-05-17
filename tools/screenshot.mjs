@@ -74,6 +74,41 @@ if (args.hitboxes) {
   await new Promise(r => setTimeout(r, 300));
 }
 
+if (args.dencam) {
+  // Place player ON the den, take a steep overhead so den + wolves are framed.
+  await page.evaluate(() => {
+    const g = (window).__game;
+    if (!g) return;
+    const den = g.scene.getObjectByName('WolvesSpawningGround');
+    if (!den) { console.log('[dencam] no den found'); return; }
+    g.player.position.set(den.position.x, 0, den.position.z);
+    g.cameraRig.targetDistance = 16;
+    g.cameraRig.currentDistance = 16;
+    g.cameraRig.targetPitch = 1.0;
+    g.cameraRig.currentPitch = 1.0;
+    g.cameraRig.targetYaw = 0;
+    g.cameraRig.currentYaw = 0;
+    console.log('[dencam] den at', den.position.x, den.position.z);
+  });
+  await new Promise(r => setTimeout(r, 700));
+}
+
+if (args.rivercam) {
+  // Top-down high-altitude view to show both river ribbons.
+  await page.evaluate(() => {
+    const g = (window).__game;
+    if (!g) return;
+    g.player.position.set(0, 0, 0);
+    g.cameraRig.targetDistance = 38;
+    g.cameraRig.currentDistance = 38;
+    g.cameraRig.targetPitch = 1.35;     // almost straight down
+    g.cameraRig.currentPitch = 1.35;
+    g.cameraRig.targetYaw = 0;
+    g.cameraRig.currentYaw = 0;
+  });
+  await new Promise(r => setTimeout(r, 700));
+}
+
 if (args.hutcam) {
   // Walk camera to the nearest hut and frame it for hitbox visibility.
   await page.evaluate(() => {
