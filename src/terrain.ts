@@ -88,19 +88,32 @@ export function createTerrain(): { mesh: THREE.Mesh; heightData: Uint8Array } {
   // Compute normals for lighting (flat shading does the low-poly look)
   lowPolyGeom.computeVertexNormals();
 
-  // Apply height-based vertex colors
+  // Apply height-based vertex colors with painterly per-vertex variation.
+  // Bands picked from elevation, then jittered by a cheap hash so the
+  // surface reads as hand-painted (WoW outdoor-zone vibe) instead of flat
+  // colour rings.
   const colors = [];
   const color = new THREE.Color();
+  const noise = createNoise2D();
 
   for (let i = 0; i < posAttribute.count; i++) {
+    const x = posAttribute.getX(i);
     const y = posAttribute.getY(i);
+    const z = posAttribute.getZ(i);
 
-    // Color by elevation (matching WotLK aesthetic)
-    if (y < 0.5) color.setHex(0x3a7d5f); // Dark grass
-    else if (y < 1.2) color.setHex(0x5a9d7f); // Medium grass
-    else if (y < 1.8) color.setHex(0x7ab99f); // Light grass
-    else if (y < 2.3) color.setHex(0xaa9966); // Stone/dirt
-    else color.setHex(0xcccccc); // High peaks
+    if (y < 0.5) color.setHex(0x3a7d5f);
+    else if (y < 1.2) color.setHex(0x5a9d7f);
+    else if (y < 1.8) color.setHex(0x7ab99f);
+    else if (y < 2.3) color.setHex(0xaa9966);
+    else color.setHex(0xcccccc);
+
+    // Slow noise for patch variation + a fine hash for per-vertex sparkle.
+    const patch = noise(x * 0.06, z * 0.06);     // -1..1
+    const fine = noise(x * 0.4 + 13.3, z * 0.4 - 7.1) * 0.5;
+    const tint = patch * 0.10 + fine * 0.05;
+    color.r = Math.max(0, Math.min(1, color.r + tint));
+    color.g = Math.max(0, Math.min(1, color.g + tint * 0.9));
+    color.b = Math.max(0, Math.min(1, color.b + tint * 0.6));
 
     colors.push(color.r, color.g, color.b);
   }

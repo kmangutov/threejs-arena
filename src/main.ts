@@ -43,6 +43,7 @@ import { ColliderDebug } from './collider-debug';
 import { WolfPack } from './wolves';
 import { Rivers } from './rivers';
 import { HpBarOverlay } from './hp-bars';
+import { Atmosphere } from './atmosphere';
 
 // ============================================================================
 // Character Factory
@@ -104,6 +105,7 @@ interface GameState {
   rivers: Rivers;
   wolves: WolfPack;
   hpBars: HpBarOverlay;
+  atmosphere: Atmosphere;
 
   // Phase 4: Network state
   mode: GameMode;
@@ -784,6 +786,7 @@ async function init(): Promise<GameState> {
   window.addEventListener('resize', () => {
     cameraRig.resize(window.innerWidth, window.innerHeight);
     renderer.setSize(window.innerWidth, window.innerHeight);
+    state.atmosphere?.setSize(window.innerWidth, window.innerHeight);
   });
 
   const clock = new THREE.Clock();
@@ -870,6 +873,7 @@ async function init(): Promise<GameState> {
     rivers,
     wolves: undefined as unknown as WolfPack,
     hpBars: undefined as unknown as HpBarOverlay,
+    atmosphere: undefined as unknown as Atmosphere,
   };
 
   // Dev tools: editor (`), snapshots (F2/F3), collider debug (F4)
@@ -909,6 +913,10 @@ async function init(): Promise<GameState> {
 
   // Floating HP bars over wounded prey (any animal the wolves have hit).
   state.hpBars = new HpBarOverlay(scene, [state.rabbits, state.cats, state.cows]);
+
+  // Atmosphere & post-processing — bloom, painterly color grade, vignette,
+  // ambient motes. Last in init so it wraps the full live scene.
+  state.atmosphere = new Atmosphere(renderer, scene, cameraRig.camera);
 
   setupInput(state);
   updateActionBar(state);
@@ -969,8 +977,10 @@ function animate(state: GameState): void {
     animateStandalone(state, delta);
   }
 
-  // Render
-  state.renderer.render(state.scene, state.cameraRig.camera);
+  // Render through the post-processing chain (bloom, color grade, vignette,
+  // ambient motes). Atmosphere is created last in init() so it always exists
+  // by the first animate() tick.
+  state.atmosphere.render(delta);
 }
 
 function animateStandalone(state: GameState, delta: number): void {
