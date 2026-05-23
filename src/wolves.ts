@@ -13,8 +13,9 @@
 
 import * as THREE from 'three';
 import { getTerrainHeight } from './terrain';
-import type { PreyRef, PreyProvider } from './prey';
-import type { DamageSplatSystem } from './damage-splat';
+import type { Collider } from './arena';
+import { emitDamageSplat, type PreyRef, type PreyProvider } from './prey';
+import { resolveAnimalPhysics } from './animal-physics';
 
 const WALK_SPEED = 1.8;
 const HUNT_SPEED = 4.0;
@@ -27,6 +28,7 @@ const ATTACK_DAMAGE = 8;
 const ATTACK_COOLDOWN = 1.4;     // seconds between bites
 const FEED_TIME = 3.0;           // seconds after a kill before resuming patrol
 const SCARE_RADIUS = 6;          // wolves passing close scare rabbits even without attacking
+const WOLF_RADIUS = 0.5;
 
 const WOLF_PALETTE = [
   { body: 0x4a4a4f, belly: 0x6a6a72, ears: 0x222226 }, // timber grey
@@ -57,6 +59,12 @@ interface Wolf {
   walkPhase: number;
   hp: number;
   maxHp: number;
+  dead: boolean;
+  deadTimer: number;
+  lastHitAt: number;
+  id: string;
+  name: string;
+  aggro: Map<string, { ref: PreyRef; score: number }>;
 }
 
 function buildWolfMesh(): WolfParts {
@@ -228,7 +236,7 @@ function buildDen(): THREE.Group {
   return den;
 }
 
-export class WolfPack {
+export class WolfPack implements PreyProvider {
   private wolves: Wolf[] = [];
   private group: THREE.Group;
   private den: THREE.Group;
@@ -236,7 +244,7 @@ export class WolfPack {
   private bounds: number;
   private heightData: Uint8Array | null;
   private preyProviders: PreyProvider[];
-  private splats: DamageSplatSystem;
+  private colliders: Collider[] = [];
 
   constructor(
     scene: THREE.Scene,
@@ -244,13 +252,11 @@ export class WolfPack {
     bounds: number,
     heightData: Uint8Array | null,
     preyProviders: PreyProvider[],
-    splats: DamageSplatSystem,
     denPos: THREE.Vector3 = new THREE.Vector3(-14, 0, -14),
   ) {
     this.bounds = bounds;
     this.heightData = heightData;
     this.preyProviders = preyProviders;
-    this.splats = splats;
     this.denPos = denPos.clone();
 
     this.group = new THREE.Group();
@@ -287,6 +293,12 @@ export class WolfPack {
       walkPhase: Math.random() * Math.PI * 2,
       hp: 60,
       maxHp: 60,
+      dead: false,
+      deadTimer: 0,
+      lastHitAt: 0,
+      id: `wolf-${this.wolves.length + 1}`,
+      name: 'Wolf',
+      aggro: new Map(),
     };
     parts.group.position.copy(pos);
     parts.group.rotation.y = wolf.yaw;
@@ -301,7 +313,27 @@ export class WolfPack {
   }
 
   update(delta: number): void {
-    for (const wolf of this.wolves) this.updateWolf(wolf, delta);
+    for (const wolf of this.wolves) {
+      if (wolf.dead) {
+        wolf.deadTimer += delta;
+        if (wolf.deadTimer > 10) {
+          wolf.dead = false;
+          wolf.deadTimer = 0;
+          wolf.hp = wolf.maxHp;
+          wolf.aggro.clear();
+          wolf.parts.group.rotation.x = 0;
+          wolf.pos.copy(this.denPos).add(new THREE.Vector3((Math.random() - 0.5) * 3, 0, (Math.random() - 0.5) * 3));
+          wolf.target.copy(this.pickWanderTarget());
+          wolf.state = 'wander';
+        }
+        continue;
+      }
+      this.updateWolf(wolf, delta);
+    }
+  }
+
+  setColliders(colliders: Collider[]): void {
+    this.colliders = colliders;
   }
 
   /**
@@ -312,8 +344,8 @@ export class WolfPack {
     return this.wolves.map(w => w.pos);
   }
 
-  /** Query every prey provider and return the closest living prey. */
-  private findNearestPrey(pos: THREE.Vector3, maxDist: number): PreyRef | null {
+  /** Query every non-wolf prey provider and return the closest living prey. */
+  private findNearestHuntTarget(pos: THREE.Vector3, maxDist: number): PreyRef | null {
     let best: PreyRef | null = null;
     let bestSq = maxDist * maxDist;
     for (const prov of this.preyProviders) {
@@ -327,16 +359,100 @@ export class WolfPack {
     return best;
   }
 
+  findNearestPrey(pos: THREE.Vector3, maxDist: number): PreyRef | null {
+    let best: Wolf | null = null;
+    let bestSq = maxDist * maxDist;
+    for (const wolf of this.wolves) {
+      if (wolf.dead) continue;
+      const dx = wolf.pos.x - pos.x;
+      const dz = wolf.pos.z - pos.z;
+      const d = dx * dx + dz * dz;
+      if (d < bestSq) { bestSq = d; best = wolf; }
+    }
+    return best ? this.makePreyRef(best) : null;
+  }
+
+  forEachPrey(fn: (ref: PreyRef) => void): void {
+    for (const wolf of this.wolves) {
+      if (!wolf.dead) fn(this.makePreyRef(wolf));
+    }
+  }
+
+  private makePreyRef(wolf: Wolf): PreyRef {
+    return {
+      id: wolf.id,
+      name: wolf.name,
+      team: 'enemy',
+      mesh: wolf.parts.group,
+      get pos() { return wolf.pos; },
+      get alive() { return !wolf.dead; },
+      get hp() { return wolf.hp; },
+      get maxHp() { return wolf.maxHp; },
+      damage: (amount: number, attacker?: PreyRef) => {
+        if (wolf.dead) return false;
+        wolf.hp -= amount;
+        wolf.lastHitAt = performance.now();
+        emitDamageSplat(wolf.parts.group, amount);
+        if (attacker?.alive) {
+          this.addAggro(wolf, attacker, amount + 40);
+          wolf.prey = attacker;
+          wolf.state = 'hunt';
+          wolf.stateTimer = 0;
+        }
+        if (wolf.hp <= 0) {
+          wolf.hp = 0;
+          wolf.dead = true;
+          wolf.prey = null;
+          wolf.aggro.clear();
+          wolf.parts.group.rotation.x = Math.PI / 2 * 0.9;
+          return true;
+        }
+        return false;
+      },
+      scare: () => {},
+    };
+  }
+
+  private addAggro(wolf: Wolf, ref: PreyRef, amount: number): void {
+    if (ref.id === wolf.id) return;
+    const existing = wolf.aggro.get(ref.id);
+    wolf.aggro.set(ref.id, { ref, score: (existing?.score ?? 0) + amount });
+  }
+
+  private chooseAggroTarget(wolf: Wolf): PreyRef | null {
+    let best: PreyRef | null = null;
+    let bestScore = 0;
+    for (const [id, entry] of wolf.aggro) {
+      entry.score *= 0.995;
+      if (!entry.ref.alive || entry.score < 1) {
+        wolf.aggro.delete(id);
+        continue;
+      }
+      if (entry.score > bestScore) {
+        bestScore = entry.score;
+        best = entry.ref;
+      }
+    }
+    return best;
+  }
+
   private updateWolf(wolf: Wolf, delta: number): void {
     // Cooldown decay
     if (wolf.attackTimer > 0) wolf.attackTimer = Math.max(0, wolf.attackTimer - delta);
     wolf.stateTimer += delta;
 
     // ----- prey acquisition / loss -----
+    const aggroTarget = this.chooseAggroTarget(wolf);
+    if (aggroTarget && aggroTarget !== wolf.prey) {
+      wolf.prey = aggroTarget;
+      wolf.state = 'hunt';
+      wolf.stateTimer = 0;
+    }
     if (wolf.state === 'wander' || wolf.state === 'return') {
-      const prey = this.findNearestPrey(wolf.pos, SCENT_RADIUS);
+      const prey = this.findNearestHuntTarget(wolf.pos, SCENT_RADIUS);
       if (prey) {
         wolf.prey = prey;
+        this.addAggro(wolf, prey, 10);
         wolf.state = 'hunt';
         wolf.stateTimer = 0;
       }
@@ -393,8 +509,9 @@ export class WolfPack {
         }
         // Bite on cooldown
         if (wolf.attackTimer <= 0) {
-          const killed = wolf.prey.damage(ATTACK_DAMAGE);
-          this.splats.spawnDamage(wolf.prey.mesh, ATTACK_DAMAGE);
+          const wolfRef = this.makePreyRef(wolf);
+          const killed = wolf.prey.damage(ATTACK_DAMAGE, wolfRef);
+          this.addAggro(wolf, wolf.prey, ATTACK_DAMAGE);
           wolf.attackTimer = ATTACK_COOLDOWN;
           // Jaw snap visual
           wolf.parts.jaw.rotation.x = -0.6;
@@ -463,14 +580,19 @@ export class WolfPack {
     wolf.parts.jaw.rotation.x = Math.min(0, wolf.parts.jaw.rotation.x + delta * 3);
 
     // Drop to terrain & rotate.
-    const y = getTerrainHeight(wolf.pos.x, wolf.pos.z, this.heightData);
+    const y = resolveAnimalPhysics(wolf.pos, {
+      radius: WOLF_RADIUS,
+      bounds: this.bounds,
+      heightData: this.heightData,
+      colliders: this.colliders,
+    });
     wolf.parts.group.position.set(wolf.pos.x, y, wolf.pos.z);
     wolf.parts.group.rotation.y = wolf.yaw;
 
     // Passive scare aura: rabbits very close panic even without active hunt.
     // (Stored on the wolf so it doesn't spam; only when not already hunting it.)
     if (wolf.state !== 'hunt' && wolf.state !== 'attack') {
-      const passive = this.findNearestPrey(wolf.pos, SCARE_RADIUS);
+      const passive = this.findNearestHuntTarget(wolf.pos, SCARE_RADIUS);
       if (passive) passive.scare(wolf.pos.x, wolf.pos.z, 800);
     }
   }

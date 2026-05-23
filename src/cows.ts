@@ -5,16 +5,18 @@
  */
 
 import * as THREE from 'three';
-import { getTerrainHeight } from './terrain';
+import type { Collider } from './arena';
 import { Holdable, HoldableProvider } from './holdable';
 import type { PreyRef, PreyProvider, PreyState } from './prey';
-import { makePreyState } from './prey';
+import { emitDamageSplat, makePreyState } from './prey';
+import { resolveAnimalPhysics } from './animal-physics';
 
 const WALK_SPEED = 1.0;
 const TURN_RATE = 1.6;
 const REACH_RADIUS = 1.5;
 const PAUSE_CHANCE = 0.5;
 const PAUSE_TIME = [2.5, 6.0];
+const COW_RADIUS = 0.7;
 
 const PALETTE = [
   { body: 0xf2ede3, spot: 0x1a1a1a }, // classic holstein white + black
@@ -44,6 +46,8 @@ interface Cow {
   held: boolean;
   mooCooldown: number;
   prey: PreyState;
+  id: string;
+  name: string;
 }
 
 interface MooBubble {
@@ -284,6 +288,7 @@ export class CowHerd implements HoldableProvider, PreyProvider {
   private scene: THREE.Scene;
   private targetCount: number;
   private respawnTimer = 8;
+  private colliders: Collider[] = [];
 
   constructor(scene: THREE.Scene, count: number, bounds: number, heightData: Uint8Array | null) {
     this.bounds = bounds;
@@ -312,6 +317,8 @@ export class CowHerd implements HoldableProvider, PreyProvider {
       held: false,
       mooCooldown: MOO_INITIAL_DELAY[0] + Math.random() * (MOO_INITIAL_DELAY[1] - MOO_INITIAL_DELAY[0]),
       prey: makePreyState(120),       // cows are tanky
+      id: `cow-${this.cows.length + 1}`,
+      name: 'Cow',
     };
     parts.group.position.copy(start);
     parts.group.rotation.y = cow.yaw;
@@ -365,18 +372,24 @@ export class CowHerd implements HoldableProvider, PreyProvider {
 
   private makePreyRef(c: Cow): PreyRef {
     return {
+      id: c.id,
+      name: c.name,
+      team: 'neutral',
       mesh: c.parts.group,
       get pos() { return c.pos; },
       get alive() { return !c.prey.dead; },
       get hp() { return c.prey.hp; },
       get maxHp() { return c.prey.maxHp; },
-      damage: (amount: number) => {
+      damage: (amount: number, attacker?: PreyRef) => {
         if (c.prey.dead) return false;
         c.prey.hp -= amount;
         c.prey.lastHitAt = performance.now();
+        emitDamageSplat(c.parts.group, amount);
+        if (attacker?.alive) c.prey.combatTarget = attacker;
         if (c.prey.hp <= 0) {
           c.prey.hp = 0;
           c.prey.dead = true;
+          c.prey.combatTarget = null;
           c.parts.group.rotation.x = Math.PI / 2 * 0.9;
           return true;
         }
@@ -398,6 +411,10 @@ export class CowHerd implements HoldableProvider, PreyProvider {
 
   forEachPrey(fn: (ref: PreyRef) => void): void {
     for (const c of this.cows) if (!c.held && !c.prey.dead) fn(this.makePreyRef(c));
+  }
+
+  setColliders(colliders: Collider[]): void {
+    this.colliders = colliders;
   }
 
   private spawnMoo(cow: Cow): void {
@@ -471,6 +488,7 @@ export class CowHerd implements HoldableProvider, PreyProvider {
   }
 
   private updateCow(cow: Cow, delta: number): void {
+    this.updateCombat(cow, delta);
     const moving = cow.pauseTimer <= 0;
 
     if (!moving) {
@@ -512,8 +530,6 @@ export class CowHerd implements HoldableProvider, PreyProvider {
     cow.pos.z += Math.cos(cow.yaw) * speed * delta;
 
     if (Math.abs(cow.pos.x) > cow.bounds || Math.abs(cow.pos.z) > cow.bounds) {
-      cow.pos.x = Math.max(-cow.bounds, Math.min(cow.bounds, cow.pos.x));
-      cow.pos.z = Math.max(-cow.bounds, Math.min(cow.bounds, cow.pos.z));
       cow.target = pickTarget(cow.bounds);
     }
 
@@ -540,8 +556,34 @@ export class CowHerd implements HoldableProvider, PreyProvider {
   }
 
   private applyTerrain(cow: Cow): void {
-    const y = getTerrainHeight(cow.pos.x, cow.pos.z, cow.heightData);
+    const y = resolveAnimalPhysics(cow.pos, {
+      radius: COW_RADIUS,
+      bounds: cow.bounds,
+      heightData: cow.heightData,
+      colliders: this.colliders,
+    });
     cow.parts.group.position.set(cow.pos.x, y, cow.pos.z);
     cow.parts.group.rotation.y = cow.yaw;
+  }
+
+  private updateCombat(cow: Cow, delta: number): void {
+    cow.prey.attackTimer = Math.max(0, cow.prey.attackTimer - delta);
+    const target = cow.prey.combatTarget;
+    if (!target?.alive) {
+      cow.prey.combatTarget = null;
+      return;
+    }
+    const dx = target.pos.x - cow.pos.x;
+    const dz = target.pos.z - cow.pos.z;
+    if (dx * dx + dz * dz > 1.8 * 1.8) {
+      cow.target.set(target.pos.x, 0, target.pos.z);
+      cow.pauseTimer = 0;
+      return;
+    }
+    cow.yaw = Math.atan2(dx, dz);
+    if (cow.prey.attackTimer <= 0) {
+      target.damage(9, this.makePreyRef(cow));
+      cow.prey.attackTimer = 1.9;
+    }
   }
 }

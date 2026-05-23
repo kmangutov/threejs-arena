@@ -5,10 +5,11 @@
  */
 
 import * as THREE from 'three';
-import { getTerrainHeight } from './terrain';
+import type { Collider } from './arena';
 import { Holdable, HoldableProvider } from './holdable';
 import type { PreyRef, PreyProvider, PreyState } from './prey';
-import { makePreyState } from './prey';
+import { emitDamageSplat, makePreyState } from './prey';
+import { resolveAnimalPhysics } from './animal-physics';
 
 const WALK_SPEED = 1.4;
 const TURN_RATE = 2.6;
@@ -16,6 +17,7 @@ const REACH_RADIUS = 1.2;
 const PAUSE_CHANCE = 0.35;
 const PAUSE_TIME = [1.5, 4.5];
 const TAIL_SEGMENTS = 4;
+const CAT_RADIUS = 0.38;
 
 const PALETTE = [
   { body: 0x2a2a2a, belly: 0x4a4a4a }, // black
@@ -45,6 +47,8 @@ interface Cat {
   heightData: Uint8Array | null;
   held: boolean;
   prey: PreyState;
+  id: string;
+  name: string;
 }
 
 function buildCatMesh(): CatParts {
@@ -183,6 +187,7 @@ export class CatColony implements HoldableProvider, PreyProvider {
   private heightData: Uint8Array | null;
   private targetCount: number;
   private respawnTimer = 6;
+  private colliders: Collider[] = [];
 
   constructor(scene: THREE.Scene, count: number, bounds: number, heightData: Uint8Array | null) {
     this.bounds = bounds;
@@ -209,6 +214,8 @@ export class CatColony implements HoldableProvider, PreyProvider {
       heightData: this.heightData,
       held: false,
       prey: makePreyState(45),
+      id: `cat-${this.cats.length + 1}`,
+      name: 'Cat',
     };
     parts.group.position.copy(start);
     parts.group.rotation.y = cat.yaw;
@@ -256,18 +263,24 @@ export class CatColony implements HoldableProvider, PreyProvider {
 
   private makePreyRef(c: Cat): PreyRef {
     return {
+      id: c.id,
+      name: c.name,
+      team: 'neutral',
       mesh: c.parts.group,
       get pos() { return c.pos; },
       get alive() { return !c.prey.dead; },
       get hp() { return c.prey.hp; },
       get maxHp() { return c.prey.maxHp; },
-      damage: (amount: number) => {
+      damage: (amount: number, attacker?: PreyRef) => {
         if (c.prey.dead) return false;
         c.prey.hp -= amount;
         c.prey.lastHitAt = performance.now();
+        emitDamageSplat(c.parts.group, amount);
+        if (attacker?.alive) c.prey.combatTarget = attacker;
         if (c.prey.hp <= 0) {
           c.prey.hp = 0;
           c.prey.dead = true;
+          c.prey.combatTarget = null;
           c.parts.group.rotation.x = Math.PI / 2 * 0.9;
           return true;
         }
@@ -289,6 +302,10 @@ export class CatColony implements HoldableProvider, PreyProvider {
 
   forEachPrey(fn: (ref: PreyRef) => void): void {
     for (const c of this.cats) if (!c.held && !c.prey.dead) fn(this.makePreyRef(c));
+  }
+
+  setColliders(colliders: Collider[]): void {
+    this.colliders = colliders;
   }
 
   findNearestHoldable(pos: THREE.Vector3, maxDist: number): Holdable | null {
@@ -327,6 +344,7 @@ export class CatColony implements HoldableProvider, PreyProvider {
   }
 
   private updateCat(cat: Cat, delta: number): void {
+    this.updateCombat(cat, delta);
     const moving = cat.pauseTimer <= 0;
 
     if (!moving) {
@@ -371,8 +389,6 @@ export class CatColony implements HoldableProvider, PreyProvider {
     cat.pos.z += Math.cos(cat.yaw) * speed * delta;
 
     if (Math.abs(cat.pos.x) > cat.bounds || Math.abs(cat.pos.z) > cat.bounds) {
-      cat.pos.x = Math.max(-cat.bounds, Math.min(cat.bounds, cat.pos.x));
-      cat.pos.z = Math.max(-cat.bounds, Math.min(cat.bounds, cat.pos.z));
       cat.target = pickTarget(cat.bounds);
     }
 
@@ -404,8 +420,34 @@ export class CatColony implements HoldableProvider, PreyProvider {
   }
 
   private applyTerrain(cat: Cat): void {
-    const y = getTerrainHeight(cat.pos.x, cat.pos.z, cat.heightData);
+    const y = resolveAnimalPhysics(cat.pos, {
+      radius: CAT_RADIUS,
+      bounds: cat.bounds,
+      heightData: cat.heightData,
+      colliders: this.colliders,
+    });
     cat.parts.group.position.set(cat.pos.x, y, cat.pos.z);
     cat.parts.group.rotation.y = cat.yaw;
+  }
+
+  private updateCombat(cat: Cat, delta: number): void {
+    cat.prey.attackTimer = Math.max(0, cat.prey.attackTimer - delta);
+    const target = cat.prey.combatTarget;
+    if (!target?.alive) {
+      cat.prey.combatTarget = null;
+      return;
+    }
+    const dx = target.pos.x - cat.pos.x;
+    const dz = target.pos.z - cat.pos.z;
+    if (dx * dx + dz * dz > 1.5 * 1.5) {
+      cat.target.set(target.pos.x, 0, target.pos.z);
+      cat.pauseTimer = 0;
+      return;
+    }
+    cat.yaw = Math.atan2(dx, dz);
+    if (cat.prey.attackTimer <= 0) {
+      target.damage(5, this.makePreyRef(cat));
+      cat.prey.attackTimer = 1.4;
+    }
   }
 }

@@ -5,8 +5,9 @@
  */
 
 import * as THREE from 'three';
-import { getTerrainHeight } from './terrain';
+import type { Collider } from './arena';
 import { Holdable, HoldableProvider } from './holdable';
+import { resolveAnimalPhysics } from './animal-physics';
 
 const HOP_SPEED = 2.6;          // peak forward speed during a hop
 const HOP_DURATION = 0.45;      // seconds of one hop arc
@@ -15,6 +16,7 @@ const TURN_RATE = 4.5;
 const REACH_RADIUS = 0.8;
 const STOP_CHANCE = 0.45;       // chance to fully stop after reaching a spot
 const STOP_TIME = [1.5, 4.5];
+const RABBIT_RADIUS = 0.28;
 
 const PALETTE = [
   { body: 0xeae3d2, belly: 0xfffaf0 }, // white
@@ -37,7 +39,7 @@ interface RabbitParts {
 type RabbitState = 'hop' | 'rest' | 'stopped';
 
 import type { PreyRef, PreyProvider, PreyState } from './prey';
-import { makePreyState } from './prey';
+import { emitDamageSplat, makePreyState } from './prey';
 
 interface Rabbit {
   parts: RabbitParts;
@@ -51,6 +53,8 @@ interface Rabbit {
   heightData: Uint8Array | null;
   held: boolean;
   prey: PreyState;
+  id: string;
+  name: string;
 }
 
 function buildRabbitMesh(): RabbitParts {
@@ -177,6 +181,7 @@ export class RabbitWarren implements HoldableProvider, PreyProvider {
   private heightData: Uint8Array | null;
   private targetCount: number;
   private respawnTimer = 4;
+  private colliders: Collider[] = [];
 
   constructor(scene: THREE.Scene, count: number, bounds: number, heightData: Uint8Array | null) {
     this.bounds = bounds;
@@ -206,6 +211,8 @@ export class RabbitWarren implements HoldableProvider, PreyProvider {
       heightData: this.heightData,
       held: false,
       prey: makePreyState(30),
+      id: `rabbit-${this.rabbits.length + 1}`,
+      name: 'Rabbit',
     };
     parts.group.position.copy(start);
     parts.group.rotation.y = rabbit.yaw;
@@ -246,18 +253,24 @@ export class RabbitWarren implements HoldableProvider, PreyProvider {
 
   private makePreyRef(r: Rabbit): PreyRef {
     return {
+      id: r.id,
+      name: r.name,
+      team: 'neutral',
       mesh: r.parts.group,
       get pos() { return r.pos; },
       get alive() { return !r.prey.dead; },
       get hp() { return r.prey.hp; },
       get maxHp() { return r.prey.maxHp; },
-      damage: (amount: number) => {
+      damage: (amount: number, attacker?: PreyRef) => {
         if (r.prey.dead) return false;
         r.prey.hp -= amount;
         r.prey.lastHitAt = performance.now();
+        emitDamageSplat(r.parts.group, amount);
+        if (attacker?.alive) r.prey.combatTarget = attacker;
         if (r.prey.hp <= 0) {
           r.prey.hp = 0;
           r.prey.dead = true;
+          r.prey.combatTarget = null;
           r.parts.group.rotation.x = Math.PI / 2 * 0.9;
           return true;
         }
@@ -277,6 +290,10 @@ export class RabbitWarren implements HoldableProvider, PreyProvider {
     for (const r of this.rabbits) {
       if (!r.held && !r.prey.dead) fn(this.makePreyRef(r));
     }
+  }
+
+  setColliders(colliders: Collider[]): void {
+    this.colliders = colliders;
   }
 
   private updateDead(r: Rabbit, delta: number): void {
@@ -332,6 +349,7 @@ export class RabbitWarren implements HoldableProvider, PreyProvider {
 
   private updateRabbit(r: Rabbit, delta: number): void {
     const now = performance.now();
+    this.updateCombat(r, delta);
 
     // Flee: if a predator scared us recently, point target directly away
     // and force hop state. Wears off after fleeUntil expires.
@@ -443,8 +461,6 @@ export class RabbitWarren implements HoldableProvider, PreyProvider {
 
     // Soft arena bounds
     if (Math.abs(r.pos.x) > r.bounds || Math.abs(r.pos.z) > r.bounds) {
-      r.pos.x = Math.max(-r.bounds, Math.min(r.bounds, r.pos.x));
-      r.pos.z = Math.max(-r.bounds, Math.min(r.bounds, r.pos.z));
       r.target = pickTarget(r.bounds);
     }
 
@@ -455,8 +471,30 @@ export class RabbitWarren implements HoldableProvider, PreyProvider {
     }
 
     // Apply terrain
-    const y = getTerrainHeight(r.pos.x, r.pos.z, r.heightData);
+    const y = resolveAnimalPhysics(r.pos, {
+      radius: RABBIT_RADIUS,
+      bounds: r.bounds,
+      heightData: r.heightData,
+      colliders: this.colliders,
+    });
     r.parts.group.position.set(r.pos.x, y, r.pos.z);
     r.parts.group.rotation.y = r.yaw;
+  }
+
+  private updateCombat(r: Rabbit, delta: number): void {
+    r.prey.attackTimer = Math.max(0, r.prey.attackTimer - delta);
+    const target = r.prey.combatTarget;
+    if (!target?.alive) {
+      r.prey.combatTarget = null;
+      return;
+    }
+    const dx = target.pos.x - r.pos.x;
+    const dz = target.pos.z - r.pos.z;
+    if (dx * dx + dz * dz > 1.35 * 1.35) return;
+    r.yaw = Math.atan2(dx, dz);
+    if (r.prey.attackTimer <= 0) {
+      target.damage(3, this.makePreyRef(r));
+      r.prey.attackTimer = 1.8;
+    }
   }
 }

@@ -8,7 +8,7 @@ import { prettyVec, dirToYaw, flattenXZ } from './coords';
 export interface TargetInfo {
   id: string;
   name: string;
-  team: 'friendly' | 'enemy';
+  team: 'friendly' | 'enemy' | 'neutral';
   mesh: THREE.Object3D;
   distance: number;
   direction: THREE.Vector3;
@@ -18,7 +18,7 @@ export class TargetingSystem {
   private raycaster: THREE.Raycaster;
   private mouse: THREE.Vector2;
   private camera: THREE.Camera;
-  private targetables: Map<THREE.Object3D, { id: string; name: string; team: 'friendly' | 'enemy' }>;
+  private targetables: Map<THREE.Object3D, { id: string; name: string; team: 'friendly' | 'enemy' | 'neutral' }>;
 
   public currentTarget: TargetInfo | null = null;
   private originalMaterials: Map<THREE.Object3D, THREE.Material | THREE.Material[]> = new Map();
@@ -61,7 +61,7 @@ export class TargetingSystem {
     mesh: THREE.Object3D,
     id: string,
     name: string,
-    team: 'friendly' | 'enemy'
+    team: 'friendly' | 'enemy' | 'neutral'
   ): void {
     this.targetables.set(mesh, { id, name, team });
     mesh.userData.targetable = true;
@@ -153,7 +153,7 @@ export class TargetingSystem {
     console.log('Target cleared');
   }
 
-  private applyHighlight(mesh: THREE.Object3D, team: 'friendly' | 'enemy'): void {
+  private applyHighlight(mesh: THREE.Object3D, team: 'friendly' | 'enemy' | 'neutral'): void {
     // Find the actual mesh with material
     mesh.traverse((child) => {
       if (child instanceof THREE.Mesh && child.material) {
@@ -167,7 +167,7 @@ export class TargetingSystem {
           } as unknown as THREE.Material);
 
           // Apply highlight without cloning
-          mat.emissive = new THREE.Color(team === 'friendly' ? 0x00ff00 : 0xff0000);
+          mat.emissive = new THREE.Color(team === 'friendly' ? 0x00ff00 : team === 'neutral' ? 0xffcc00 : 0xff0000);
           mat.emissiveIntensity = 0.3;
         }
       }
@@ -221,7 +221,7 @@ export class TargetingSystem {
 
       // Set name with team color
       this.nameElement.textContent = name;
-      this.nameElement.style.color = team === 'friendly' ? '#00ff88' : '#ff4444';
+      this.nameElement.style.color = team === 'friendly' ? '#00ff88' : team === 'neutral' ? '#ffcc00' : '#ff4444';
 
       // Set info
       const yawDeg = (dirToYaw(direction) * 180 / Math.PI).toFixed(0);

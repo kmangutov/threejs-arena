@@ -6,14 +6,18 @@
  */
 
 import * as THREE from 'three';
-import { getTerrainHeight } from './terrain';
+import type { Collider } from './arena';
 import { Holdable, HoldableProvider } from './holdable';
+import type { PreyRef, PreyProvider, PreyState } from './prey';
+import { emitDamageSplat, makePreyState } from './prey';
+import { resolveAnimalPhysics } from './animal-physics';
 
 const WALK_SPEED = 1.6;
 const TURN_RATE = 2.4;          // radians/sec toward target heading
 const REACH_RADIUS = 1.2;       // how close before picking a new spot
 const PAUSE_CHANCE = 0.25;      // chance to idle after reaching a spot
 const PAUSE_TIME = [1.5, 4.0];
+const DOG_RADIUS = 0.45;
 
 const PALETTE = [
   { body: 0x8b6f47, belly: 0xc9a47a }, // tan
@@ -41,6 +45,9 @@ interface Dog {
   bounds: number;
   heightData: Uint8Array | null;
   held: boolean;
+  prey: PreyState;
+  id: string;
+  name: string;
 }
 
 function buildDogMesh(): DogParts {
@@ -156,11 +163,12 @@ function pickTarget(bounds: number): THREE.Vector3 {
   );
 }
 
-export class DogPack implements HoldableProvider {
+export class DogPack implements HoldableProvider, PreyProvider {
   private dogs: Dog[] = [];
   private group: THREE.Group;
   private bounds: number;
   private heightData: Uint8Array | null;
+  private colliders: Collider[] = [];
 
   constructor(scene: THREE.Scene, count: number, bounds: number, heightData: Uint8Array | null) {
     this.bounds = bounds;
@@ -186,7 +194,10 @@ export class DogPack implements HoldableProvider {
       walkPhase: Math.random() * Math.PI * 2,
       bounds: this.bounds,
       heightData: this.heightData,
-      held: false
+      held: false,
+      prey: makePreyState(55),
+      id: `dog-${this.dogs.length + 1}`,
+      name: 'Dog',
     };
     parts.group.position.copy(start);
     parts.group.rotation.y = dog.yaw;
@@ -196,9 +207,78 @@ export class DogPack implements HoldableProvider {
 
   update(delta: number): void {
     for (const dog of this.dogs) {
+      if (dog.prey.dead) {
+        dog.prey.deadTimer += delta;
+        if (dog.prey.deadTimer > 6) {
+          dog.prey.hp = dog.prey.maxHp;
+          dog.prey.dead = false;
+          dog.prey.deadTimer = 0;
+          dog.prey.combatTarget = null;
+          dog.parts.group.rotation.x = 0;
+          dog.target = pickTarget(dog.bounds);
+        }
+        continue;
+      }
       if (dog.held) continue;
       this.updateDog(dog, delta);
     }
+  }
+
+  setColliders(colliders: Collider[]): void {
+    this.colliders = colliders;
+  }
+
+  findNearestPrey(pos: THREE.Vector3, maxDist: number): PreyRef | null {
+    let best: Dog | null = null;
+    let bestSq = maxDist * maxDist;
+    for (const dog of this.dogs) {
+      if (dog.held || dog.prey.dead) continue;
+      const dx = dog.pos.x - pos.x;
+      const dz = dog.pos.z - pos.z;
+      const d = dx * dx + dz * dz;
+      if (d < bestSq) { bestSq = d; best = dog; }
+    }
+    return best ? this.makePreyRef(best) : null;
+  }
+
+  forEachPrey(fn: (ref: PreyRef) => void): void {
+    for (const dog of this.dogs) {
+      if (!dog.held && !dog.prey.dead) fn(this.makePreyRef(dog));
+    }
+  }
+
+  private makePreyRef(dog: Dog): PreyRef {
+    return {
+      id: dog.id,
+      name: dog.name,
+      team: 'neutral',
+      mesh: dog.parts.group,
+      get pos() { return dog.pos; },
+      get alive() { return !dog.prey.dead; },
+      get hp() { return dog.prey.hp; },
+      get maxHp() { return dog.prey.maxHp; },
+      damage: (amount: number, attacker?: PreyRef) => {
+        if (dog.prey.dead) return false;
+        dog.prey.hp -= amount;
+        dog.prey.lastHitAt = performance.now();
+        emitDamageSplat(dog.parts.group, amount);
+        if (attacker?.alive) dog.prey.combatTarget = attacker;
+        if (dog.prey.hp <= 0) {
+          dog.prey.hp = 0;
+          dog.prey.dead = true;
+          dog.prey.combatTarget = null;
+          dog.parts.group.rotation.x = Math.PI / 2 * 0.9;
+          return true;
+        }
+        return false;
+      },
+      scare: (fromX, fromZ, durMs) => {
+        if (dog.prey.dead) return;
+        dog.prey.fleeUntil = performance.now() + durMs;
+        dog.prey.fleeFromX = fromX;
+        dog.prey.fleeFromZ = fromZ;
+      },
+    };
   }
 
   findNearestHoldable(pos: THREE.Vector3, maxDist: number): Holdable | null {
@@ -237,6 +317,7 @@ export class DogPack implements HoldableProvider {
   }
 
   private updateDog(dog: Dog, delta: number): void {
+    this.updateCombat(dog, delta);
     const moving = dog.pauseTimer <= 0;
 
     if (!moving) {
@@ -279,8 +360,6 @@ export class DogPack implements HoldableProvider {
 
     // Soft arena bounds — pick a new target if drifting out
     if (Math.abs(dog.pos.x) > dog.bounds || Math.abs(dog.pos.z) > dog.bounds) {
-      dog.pos.x = Math.max(-dog.bounds, Math.min(dog.bounds, dog.pos.x));
-      dog.pos.z = Math.max(-dog.bounds, Math.min(dog.bounds, dog.pos.z));
       dog.target = pickTarget(dog.bounds);
     }
 
@@ -307,8 +386,39 @@ export class DogPack implements HoldableProvider {
   }
 
   private applyTerrain(dog: Dog): void {
-    const y = getTerrainHeight(dog.pos.x, dog.pos.z, dog.heightData);
+    const y = this.resolvePosition(dog);
     dog.parts.group.position.set(dog.pos.x, y, dog.pos.z);
     dog.parts.group.rotation.y = dog.yaw;
+  }
+
+  private resolvePosition(dog: Dog): number {
+    return resolveAnimalPhysics(dog.pos, {
+      radius: DOG_RADIUS,
+      bounds: dog.bounds,
+      heightData: dog.heightData,
+      colliders: this.colliders,
+    });
+  }
+
+  private updateCombat(dog: Dog, delta: number): void {
+    dog.prey.attackTimer = Math.max(0, dog.prey.attackTimer - delta);
+    const target = dog.prey.combatTarget;
+    if (!target?.alive) {
+      dog.prey.combatTarget = null;
+      return;
+    }
+    const dx = target.pos.x - dog.pos.x;
+    const dz = target.pos.z - dog.pos.z;
+    const d2 = dx * dx + dz * dz;
+    if (d2 > 2.0 * 2.0) {
+      dog.target.set(target.pos.x, 0, target.pos.z);
+      dog.pauseTimer = 0;
+      return;
+    }
+    dog.yaw = Math.atan2(dx, dz);
+    if (dog.prey.attackTimer <= 0) {
+      target.damage(6, this.makePreyRef(dog));
+      dog.prey.attackTimer = 1.6;
+    }
   }
 }

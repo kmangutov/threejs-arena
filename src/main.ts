@@ -44,6 +44,7 @@ import { WolfPack } from './wolves';
 import { Rivers } from './rivers';
 import { HpBarOverlay } from './hp-bars';
 import { Atmosphere } from './atmosphere';
+import type { PreyProvider, PreyRef } from './prey';
 
 // ============================================================================
 // Character Factory
@@ -106,6 +107,7 @@ interface GameState {
   wolves: WolfPack;
   hpBars: HpBarOverlay;
   atmosphere: Atmosphere;
+  livingProviders: PreyProvider[];
 
   // Phase 4: Network state
   mode: GameMode;
@@ -313,6 +315,35 @@ function updateCCVisuals(state: GameState): void {
   }
 }
 
+function makePlayerCombatRef(state: GameState): PreyRef {
+  return {
+    id: 'player',
+    name: 'Player',
+    team: 'friendly',
+    mesh: state.playerView.root,
+    get pos() { return state.player.position; },
+    get alive() { return true; },
+    get hp() { return 1; },
+    get maxHp() { return 1; },
+    damage: (amount: number) => {
+      state.damageSplats.spawnDamage(state.playerView.root, amount);
+      return false;
+    },
+    scare: () => {},
+  };
+}
+
+function syncLivingTargetables(state: GameState): void {
+  for (const provider of state.livingProviders) {
+    provider.forEachPrey((ref) => {
+      ref.mesh.userData.damageSplats = state.damageSplats;
+      ref.mesh.userData.livingRef = ref;
+      state.entities.set(ref.id, ref.mesh);
+      state.targeting.registerTargetable(ref.mesh, ref.id, ref.name, ref.team);
+    });
+  }
+}
+
 async function setClass(state: GameState, className: ClassName): Promise<void> {
   state.currentClass = className;
   state.cooldowns.resetAll();
@@ -509,7 +540,12 @@ function spawnDamage(state: GameState, entityId: string, min: number, max: numbe
   const entity = state.entities.get(entityId);
   if (!entity) return;
   const amount = Math.floor(min + Math.random() * (max - min + 1));
-  state.damageSplats.spawnDamage(entity, amount);
+  const living = entity.userData.livingRef as PreyRef | undefined;
+  if (living?.alive) {
+    living.damage(amount, makePlayerCombatRef(state));
+  } else {
+    state.damageSplats.spawnDamage(entity, amount);
+  }
 }
 
 function spawnHeal(state: GameState, entityId: string, min: number, max: number): void {
@@ -740,6 +776,7 @@ async function init(): Promise<GameState> {
     for (const def of INITIAL_ENTITIES) {
       if (def.id !== 'player') {
         const mesh = createEntityMesh(def);
+        mesh.position.y = getTerrainHeight(mesh.position.x, mesh.position.z, terrainData);
         scene.add(mesh);
         entities.set(def.id, mesh);
       }
@@ -750,16 +787,27 @@ async function init(): Promise<GameState> {
   const useMixamo = new URL(window.location.href).searchParams.get('mixamo') === '1';
   const playerView = await createCharacterView(useMixamo, playerDef.color);
   playerView.root.position.set(...playerDef.position);
+  playerView.root.position.y = getTerrainHeight(playerView.root.position.x, playerView.root.position.z, terrainData);
   scene.add(playerView.root);
   entities.set('player', playerView.root);
 
   const player = new PlayerController(
-    new THREE.Vector3(...playerDef.position)
+    playerView.root.position.clone()
   );
   player.mesh = playerView.root;
   // Combine static arena colliders with the ecosystem's dynamic ones (huts +
   // sizeable rocks). Re-applied whenever the ecosystem regenerates.
-  const refreshColliders = () => player.setColliders([...getColliders(), ...ecosystem.getColliders()]);
+  const allColliders = () => [...getColliders(), ...ecosystem.getColliders()];
+  let liveState: GameState | null = null;
+  const refreshColliders = () => {
+    const colliders = allColliders();
+    player.setColliders(colliders);
+    liveState?.dogs?.setColliders(colliders);
+    liveState?.rabbits?.setColliders(colliders);
+    liveState?.cats?.setColliders(colliders);
+    liveState?.cows?.setColliders(colliders);
+    liveState?.wolves?.setColliders(colliders);
+  };
   refreshColliders();
   player.setTerrainHeightData(getTerrainHeightData());
 
@@ -874,7 +922,9 @@ async function init(): Promise<GameState> {
     wolves: undefined as unknown as WolfPack,
     hpBars: undefined as unknown as HpBarOverlay,
     atmosphere: undefined as unknown as Atmosphere,
+    livingProviders: [],
   };
+  liveState = state;
 
   // Dev tools: editor (`), snapshots (F2/F3), collider debug (F4)
   state.editor = new SceneEditor(scene, cameraRig.camera, renderer.domElement);
@@ -887,7 +937,7 @@ async function init(): Promise<GameState> {
   });
   state.colliderDebug = new ColliderDebug({
     scene,
-    getColliders: () => [...getColliders(), ...ecosystem.getColliders()],
+    getColliders: allColliders,
   });
 
   // Push fresh colliders to the player whenever the ecosystem regenerates,
@@ -906,13 +956,18 @@ async function init(): Promise<GameState> {
     5,
     18,
     terrainData,
-    [state.rabbits, state.cats, state.cows],
-    state.damageSplats,
+    [state.dogs, state.rabbits, state.cats, state.cows],
     new THREE.Vector3(-14, 0, -14),
   );
+  state.livingProviders = [state.dogs, state.rabbits, state.cats, state.cows, state.wolves];
+  for (const provider of state.livingProviders) {
+    provider.forEachPrey((ref) => { ref.mesh.userData.damageSplats = state.damageSplats; });
+  }
+  refreshColliders();
+  syncLivingTargetables(state);
 
-  // Floating HP bars over wounded prey (any animal the wolves have hit).
-  state.hpBars = new HpBarOverlay(scene, [state.rabbits, state.cats, state.cows]);
+  // Floating HP bars over wounded living animals.
+  state.hpBars = new HpBarOverlay(scene, state.livingProviders);
 
   // Atmosphere & post-processing — bloom, painterly color grade, vignette,
   // ambient motes. Last in init so it wraps the full live scene.
@@ -1059,6 +1114,7 @@ function animateStandalone(state: GameState, delta: number): void {
   state.ecosystem.update(state.clock.elapsedTime);
   state.rivers.update(state.clock.elapsedTime);
   state.wolves.update(delta);
+  syncLivingTargetables(state);
   state.hpBars.update();
   state.colliderDebug.update();
   updateGrassActors(state);
@@ -1133,6 +1189,7 @@ function animateMultiplayer(state: GameState, delta: number): void {
   state.ecosystem.update(state.clock.elapsedTime);
   state.rivers.update(state.clock.elapsedTime);
   state.wolves.update(delta);
+  syncLivingTargetables(state);
   state.hpBars.update();
   state.colliderDebug.update();
   updateGrassActors(state);
