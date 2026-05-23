@@ -46,6 +46,7 @@ import { HpBarOverlay } from './hp-bars';
 import { Atmosphere } from './atmosphere';
 import type { PreyProvider } from './prey';
 import { BasicGameEntity, GameEntity, GameEntityRegistry, RefGameEntity } from './game-entity';
+import { MutantPredator } from './mutant-predator';
 
 // ============================================================================
 // Character Factory
@@ -106,6 +107,7 @@ interface GameState {
   colliderDebug: ColliderDebug;
   rivers: Rivers;
   wolves: WolfPack;
+  mutantPredator: MutantPredator;
   hpBars: HpBarOverlay;
   atmosphere: Atmosphere;
   livingProviders: PreyProvider[];
@@ -804,6 +806,7 @@ async function init(): Promise<GameState> {
     liveState?.cats?.setColliders(colliders);
     liveState?.cows?.setColliders(colliders);
     liveState?.wolves?.setColliders(colliders);
+    liveState?.mutantPredator?.setColliders(colliders);
   };
   refreshColliders();
   player.setTerrainHeightData(getTerrainHeightData());
@@ -910,6 +913,7 @@ async function init(): Promise<GameState> {
     colliderDebug: undefined as unknown as ColliderDebug,
     rivers,
     wolves: undefined as unknown as WolfPack,
+    mutantPredator: undefined as unknown as MutantPredator,
     hpBars: undefined as unknown as HpBarOverlay,
     atmosphere: undefined as unknown as Atmosphere,
     livingProviders: [],
@@ -978,7 +982,14 @@ async function init(): Promise<GameState> {
     [state.dogs, state.rabbits, state.cats, state.cows],
     new THREE.Vector3(-14, 0, -14),
   );
-  state.livingProviders = [state.dogs, state.rabbits, state.cats, state.cows, state.wolves];
+  state.mutantPredator = await MutantPredator.create(
+    scene,
+    18,
+    terrainData,
+    [state.dogs, state.rabbits, state.cats, state.cows],
+    new THREE.Vector3(14, 0, -14),
+  );
+  state.livingProviders = [state.dogs, state.rabbits, state.cats, state.cows, state.wolves, state.mutantPredator];
   for (const provider of state.livingProviders) {
     provider.forEachPrey((ref) => { ref.mesh.userData.damageSplats = state.damageSplats; });
   }
@@ -1133,6 +1144,7 @@ function animateStandalone(state: GameState, delta: number): void {
   state.ecosystem.update(state.clock.elapsedTime);
   state.rivers.update(state.clock.elapsedTime);
   state.wolves.update(delta);
+  state.mutantPredator.update(delta);
   syncLivingTargetables(state);
   state.hpBars.update();
   state.colliderDebug.update();
@@ -1208,6 +1220,7 @@ function animateMultiplayer(state: GameState, delta: number): void {
   state.ecosystem.update(state.clock.elapsedTime);
   state.rivers.update(state.clock.elapsedTime);
   state.wolves.update(delta);
+  state.mutantPredator.update(delta);
   syncLivingTargetables(state);
   state.hpBars.update();
   state.colliderDebug.update();
