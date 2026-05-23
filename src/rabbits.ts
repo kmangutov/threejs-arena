@@ -39,7 +39,7 @@ interface RabbitParts {
 type RabbitState = 'hop' | 'rest' | 'stopped';
 
 import type { PreyRef, PreyProvider, PreyState } from './prey';
-import { emitDamageSplat, emitHealSplat, healPreyState, makePreyState } from './prey';
+import { combatContactRange, emitDamageSplat, emitHealSplat, healPreyState, maintainCombatSpacing, makePreyState } from './prey';
 
 interface Rabbit {
   parts: RabbitParts;
@@ -261,6 +261,7 @@ export class RabbitWarren implements HoldableProvider, PreyProvider {
       get alive() { return !r.prey.dead; },
       get hp() { return r.prey.hp; },
       get maxHp() { return r.prey.maxHp; },
+      get radius() { return RABBIT_RADIUS; },
       damage: (amount: number, attacker?: PreyRef) => {
         if (r.prey.dead) return false;
         r.prey.hp -= amount;
@@ -495,7 +496,9 @@ export class RabbitWarren implements HoldableProvider, PreyProvider {
     }
     const dx = target.pos.x - r.pos.x;
     const dz = target.pos.z - r.pos.z;
-    if (dx * dx + dz * dz > 1.35 * 1.35) return;
+    const attackRange = combatContactRange(RABBIT_RADIUS, target);
+    if (dx * dx + dz * dz > attackRange * attackRange) return;
+    maintainCombatSpacing(r.pos, target, attackRange);
     r.yaw = Math.atan2(dx, dz);
     if (r.prey.attackTimer <= 0) {
       target.damage(3, this.makePreyRef(r));

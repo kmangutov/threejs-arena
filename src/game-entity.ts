@@ -20,6 +20,7 @@ export abstract class GameEntity {
   abstract get alive(): boolean;
   abstract get hp(): number;
   abstract get maxHp(): number;
+  abstract get radius(): number;
   abstract damage(amount: number, attacker?: GameEntity): boolean;
   abstract heal(amount: number): number;
 
@@ -41,6 +42,7 @@ export interface EntityRefLike {
   readonly alive: boolean;
   readonly hp: number;
   readonly maxHp: number;
+  readonly radius?: number;
   damage(amount: number, attacker?: EntityRefLike): boolean;
   heal(amount: number): number;
 }
@@ -57,6 +59,7 @@ export class RefGameEntity extends GameEntity {
   get alive(): boolean { return this.ref.alive; }
   get hp(): number { return this.ref.hp; }
   get maxHp(): number { return this.ref.maxHp; }
+  get radius(): number { return this.ref.radius ?? 0.6; }
 
   damage(amount: number, attacker?: GameEntity): boolean {
     return this.ref.damage(amount, attacker);
@@ -71,6 +74,7 @@ export class BasicGameEntity extends GameEntity {
   private position: THREE.Vector3;
   private currentHp: number;
   private readonly maximumHp: number;
+  private readonly collisionRadius: number;
   private readonly splats?: {
     spawnDamage(target: THREE.Object3D, amount: number): void;
     spawnHeal(target: THREE.Object3D, amount: number): void;
@@ -82,6 +86,7 @@ export class BasicGameEntity extends GameEntity {
     team: EntityTeam;
     mesh: THREE.Object3D;
     hp: number;
+    radius?: number;
     splats?: {
       spawnDamage(target: THREE.Object3D, amount: number): void;
       spawnHeal(target: THREE.Object3D, amount: number): void;
@@ -91,6 +96,7 @@ export class BasicGameEntity extends GameEntity {
     super(opts.id, opts.name, opts.team, opts.mesh);
     this.maximumHp = opts.hp;
     this.currentHp = opts.hp;
+    this.collisionRadius = opts.radius ?? 0.6;
     this.splats = opts.splats;
     this.position = opts.position ?? opts.mesh.position;
   }
@@ -99,6 +105,7 @@ export class BasicGameEntity extends GameEntity {
   get alive(): boolean { return this.currentHp > 0; }
   get hp(): number { return this.currentHp; }
   get maxHp(): number { return this.maximumHp; }
+  get radius(): number { return this.collisionRadius; }
 
   damage(amount: number): boolean {
     if (!this.alive) return false;

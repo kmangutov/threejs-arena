@@ -8,7 +8,7 @@ import * as THREE from 'three';
 import type { Collider } from './arena';
 import { Holdable, HoldableProvider } from './holdable';
 import type { PreyRef, PreyProvider, PreyState } from './prey';
-import { emitDamageSplat, emitHealSplat, healPreyState, makePreyState } from './prey';
+import { combatContactRange, emitDamageSplat, emitHealSplat, healPreyState, maintainCombatSpacing, makePreyState } from './prey';
 import { resolveAnimalPhysics } from './animal-physics';
 
 const WALK_SPEED = 1.4;
@@ -271,6 +271,7 @@ export class CatColony implements HoldableProvider, PreyProvider {
       get alive() { return !c.prey.dead; },
       get hp() { return c.prey.hp; },
       get maxHp() { return c.prey.maxHp; },
+      get radius() { return CAT_RADIUS; },
       damage: (amount: number, attacker?: PreyRef) => {
         if (c.prey.dead) return false;
         c.prey.hp -= amount;
@@ -444,11 +445,13 @@ export class CatColony implements HoldableProvider, PreyProvider {
     }
     const dx = target.pos.x - cat.pos.x;
     const dz = target.pos.z - cat.pos.z;
-    if (dx * dx + dz * dz > 1.5 * 1.5) {
+    const attackRange = combatContactRange(CAT_RADIUS, target);
+    if (dx * dx + dz * dz > attackRange * attackRange) {
       cat.target.set(target.pos.x, 0, target.pos.z);
       cat.pauseTimer = 0;
       return;
     }
+    maintainCombatSpacing(cat.pos, target, attackRange);
     cat.yaw = Math.atan2(dx, dz);
     if (cat.prey.attackTimer <= 0) {
       target.damage(5, this.makePreyRef(cat));

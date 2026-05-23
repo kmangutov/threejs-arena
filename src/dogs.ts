@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import type { Collider } from './arena';
 import { Holdable, HoldableProvider } from './holdable';
 import type { PreyRef, PreyProvider, PreyState } from './prey';
-import { emitDamageSplat, emitHealSplat, healPreyState, makePreyState } from './prey';
+import { combatContactRange, emitDamageSplat, emitHealSplat, healPreyState, maintainCombatSpacing, makePreyState } from './prey';
 import { resolveAnimalPhysics } from './animal-physics';
 
 const WALK_SPEED = 1.6;
@@ -257,6 +257,7 @@ export class DogPack implements HoldableProvider, PreyProvider {
       get alive() { return !dog.prey.dead; },
       get hp() { return dog.prey.hp; },
       get maxHp() { return dog.prey.maxHp; },
+      get radius() { return DOG_RADIUS; },
       damage: (amount: number, attacker?: PreyRef) => {
         if (dog.prey.dead) return false;
         dog.prey.hp -= amount;
@@ -415,11 +416,13 @@ export class DogPack implements HoldableProvider, PreyProvider {
     const dx = target.pos.x - dog.pos.x;
     const dz = target.pos.z - dog.pos.z;
     const d2 = dx * dx + dz * dz;
-    if (d2 > 2.0 * 2.0) {
+    const attackRange = combatContactRange(DOG_RADIUS, target);
+    if (d2 > attackRange * attackRange) {
       dog.target.set(target.pos.x, 0, target.pos.z);
       dog.pauseTimer = 0;
       return;
     }
+    maintainCombatSpacing(dog.pos, target, attackRange);
     dog.yaw = Math.atan2(dx, dz);
     if (dog.prey.attackTimer <= 0) {
       target.damage(6, this.makePreyRef(dog));

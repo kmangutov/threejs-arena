@@ -18,6 +18,7 @@ export interface PreyRef extends EntityRefLike {
   readonly alive: boolean;
   readonly hp: number;
   readonly maxHp: number;
+  readonly radius: number;
   /** Returns true if this hit killed the prey. */
   damage(amount: number, attacker?: EntityRefLike): boolean;
   /** Returns the actual amount restored. */
@@ -83,4 +84,19 @@ export function healPreyState(state: PreyState, amount: number): number {
   state.hp = Math.min(state.maxHp, state.hp + amount);
   state.lastHitAt = performance.now();
   return state.hp - before;
+}
+
+export function combatContactRange(attackerRadius: number, target: PreyRef, buffer = 0.15): number {
+  return attackerRadius + target.radius + buffer;
+}
+
+export function maintainCombatSpacing(pos: THREE.Vector3, target: PreyRef, range: number): void {
+  const dx = pos.x - target.pos.x;
+  const dz = pos.z - target.pos.z;
+  const dist = Math.hypot(dx, dz);
+  const minDist = range * 0.9;
+  if (dist <= 0.001 || dist >= minDist) return;
+  const push = minDist - dist;
+  pos.x += (dx / dist) * push;
+  pos.z += (dz / dist) * push;
 }

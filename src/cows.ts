@@ -8,7 +8,7 @@ import * as THREE from 'three';
 import type { Collider } from './arena';
 import { Holdable, HoldableProvider } from './holdable';
 import type { PreyRef, PreyProvider, PreyState } from './prey';
-import { emitDamageSplat, emitHealSplat, healPreyState, makePreyState } from './prey';
+import { combatContactRange, emitDamageSplat, emitHealSplat, healPreyState, maintainCombatSpacing, makePreyState } from './prey';
 import { resolveAnimalPhysics } from './animal-physics';
 
 const WALK_SPEED = 1.0;
@@ -380,6 +380,7 @@ export class CowHerd implements HoldableProvider, PreyProvider {
       get alive() { return !c.prey.dead; },
       get hp() { return c.prey.hp; },
       get maxHp() { return c.prey.maxHp; },
+      get radius() { return COW_RADIUS; },
       damage: (amount: number, attacker?: PreyRef) => {
         if (c.prey.dead) return false;
         c.prey.hp -= amount;
@@ -580,11 +581,13 @@ export class CowHerd implements HoldableProvider, PreyProvider {
     }
     const dx = target.pos.x - cow.pos.x;
     const dz = target.pos.z - cow.pos.z;
-    if (dx * dx + dz * dz > 1.8 * 1.8) {
+    const attackRange = combatContactRange(COW_RADIUS, target);
+    if (dx * dx + dz * dz > attackRange * attackRange) {
       cow.target.set(target.pos.x, 0, target.pos.z);
       cow.pauseTimer = 0;
       return;
     }
+    maintainCombatSpacing(cow.pos, target, attackRange);
     cow.yaw = Math.atan2(dx, dz);
     if (cow.prey.attackTimer <= 0) {
       target.damage(9, this.makePreyRef(cow));

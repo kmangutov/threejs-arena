@@ -362,6 +362,7 @@ async function setClass(state: GameState, className: ClassName): Promise<void> {
     team: 'friendly',
     mesh: state.playerView.root,
     hp: 100,
+    radius: 0.35,
     splats: state.damageSplats,
     position: state.player.position,
   }));
@@ -813,7 +814,7 @@ async function init(): Promise<GameState> {
     player.attach();
   }
 
-  const targeting = new TargetingSystem(cameraRig.camera);
+  const targeting = new TargetingSystem(cameraRig.camera, scene);
   targeting.attach(renderer.domElement);
 
   const debugElement = document.getElementById('debug-info');
@@ -922,6 +923,7 @@ async function init(): Promise<GameState> {
     team: playerDef.team,
     mesh: playerView.root,
     hp: 100,
+    radius: playerDef.collider.radius,
     splats: damageSplats,
     position: player.position,
   }));
@@ -936,6 +938,7 @@ async function init(): Promise<GameState> {
         team: def.team,
         mesh,
         hp: 100,
+        radius: def.collider.radius,
         splats: damageSplats,
       }));
       targeting.registerTargetable(mesh, entity.id, entity.name, entity.team);

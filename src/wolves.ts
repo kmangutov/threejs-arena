@@ -14,7 +14,7 @@
 import * as THREE from 'three';
 import { getTerrainHeight } from './terrain';
 import type { Collider } from './arena';
-import { emitDamageSplat, emitHealSplat, type PreyRef, type PreyProvider } from './prey';
+import { combatContactRange, emitDamageSplat, emitHealSplat, maintainCombatSpacing, type PreyRef, type PreyProvider } from './prey';
 import { resolveAnimalPhysics } from './animal-physics';
 
 const WALK_SPEED = 1.8;
@@ -23,7 +23,6 @@ const TURN_RATE = 3.0;
 const REACH_RADIUS = 1.0;
 const PROWL_RADIUS = 6;          // wander radius around the den when idle
 const SCENT_RADIUS = 18;         // how far a wolf can smell prey
-const ATTACK_RANGE = 1.2;        // bite range
 const ATTACK_DAMAGE = 8;
 const ATTACK_COOLDOWN = 1.4;     // seconds between bites
 const FEED_TIME = 3.0;           // seconds after a kill before resuming patrol
@@ -65,6 +64,7 @@ interface Wolf {
   id: string;
   name: string;
   aggro: Map<string, { ref: PreyRef; score: number }>;
+  prowlCenter: THREE.Vector3;
 }
 
 function buildWolfMesh(): WolfParts {
@@ -275,10 +275,13 @@ export class WolfPack implements PreyProvider {
 
   private spawnWolf(): void {
     const parts = buildWolfMesh();
+    const idx = this.wolves.length;
+    const angle = idx * 2.399963 + Math.random() * 0.45;
+    const spread = 2.5 + (idx % 3) * 1.4 + Math.random() * 1.2;
     const offset = new THREE.Vector3(
-      (Math.random() - 0.5) * 4,
+      Math.cos(angle) * spread,
       0,
-      (Math.random() - 0.5) * 4,
+      Math.sin(angle) * spread,
     );
     const pos = this.denPos.clone().add(offset);
     const wolf: Wolf = {
@@ -286,7 +289,7 @@ export class WolfPack implements PreyProvider {
       pos,
       yaw: Math.random() * Math.PI * 2,
       state: 'wander',
-      target: this.pickWanderTarget(),
+      target: new THREE.Vector3(),
       prey: null,
       attackTimer: 0,
       stateTimer: 0,
@@ -299,17 +302,20 @@ export class WolfPack implements PreyProvider {
       id: `wolf-${this.wolves.length + 1}`,
       name: 'Wolf',
       aggro: new Map(),
+      prowlCenter: pos.clone(),
     };
+    wolf.target.copy(this.pickWanderTarget(wolf));
     parts.group.position.copy(pos);
     parts.group.rotation.y = wolf.yaw;
     this.group.add(parts.group);
     this.wolves.push(wolf);
   }
 
-  private pickWanderTarget(): THREE.Vector3 {
+  private pickWanderTarget(wolf?: Wolf): THREE.Vector3 {
+    const center = wolf?.prowlCenter ?? this.denPos;
     const a = Math.random() * Math.PI * 2;
     const r = PROWL_RADIUS * Math.sqrt(Math.random());
-    return new THREE.Vector3(this.denPos.x + Math.cos(a) * r, 0, this.denPos.z + Math.sin(a) * r);
+    return new THREE.Vector3(center.x + Math.cos(a) * r, 0, center.z + Math.sin(a) * r);
   }
 
   update(delta: number): void {
@@ -323,7 +329,8 @@ export class WolfPack implements PreyProvider {
           wolf.aggro.clear();
           wolf.parts.group.rotation.x = 0;
           wolf.pos.copy(this.denPos).add(new THREE.Vector3((Math.random() - 0.5) * 3, 0, (Math.random() - 0.5) * 3));
-          wolf.target.copy(this.pickWanderTarget());
+          wolf.prowlCenter.copy(wolf.pos);
+          wolf.target.copy(this.pickWanderTarget(wolf));
           wolf.state = 'wander';
         }
         continue;
@@ -388,6 +395,7 @@ export class WolfPack implements PreyProvider {
       get alive() { return !wolf.dead; },
       get hp() { return wolf.hp; },
       get maxHp() { return wolf.maxHp; },
+      get radius() { return WOLF_RADIUS; },
       damage: (amount: number, attacker?: PreyRef) => {
         if (wolf.dead) return false;
         wolf.hp -= amount;
@@ -484,7 +492,7 @@ export class WolfPack implements PreyProvider {
         const dx = wolf.target.x - wolf.pos.x;
         const dz = wolf.target.z - wolf.pos.z;
         if (dx * dx + dz * dz < REACH_RADIUS * REACH_RADIUS) {
-          wolf.target.copy(this.pickWanderTarget());
+          wolf.target.copy(this.pickWanderTarget(wolf));
         }
         break;
       }
@@ -498,7 +506,8 @@ export class WolfPack implements PreyProvider {
         // In bite range → transition to attack
         const dx = targetX - wolf.pos.x;
         const dz = targetZ - wolf.pos.z;
-        if (dx * dx + dz * dz < ATTACK_RANGE * ATTACK_RANGE) {
+        const attackRange = combatContactRange(WOLF_RADIUS, wolf.prey);
+        if (dx * dx + dz * dz < attackRange * attackRange) {
           wolf.state = 'attack';
           wolf.stateTimer = 0;
         }
@@ -512,7 +521,9 @@ export class WolfPack implements PreyProvider {
         // Out of bite range? Resume chase.
         const dx = targetX - wolf.pos.x;
         const dz = targetZ - wolf.pos.z;
-        if (dx * dx + dz * dz > (ATTACK_RANGE * 1.6) * (ATTACK_RANGE * 1.6)) {
+        const attackRange = combatContactRange(WOLF_RADIUS, wolf.prey);
+        maintainCombatSpacing(wolf.pos, wolf.prey, attackRange);
+        if (dx * dx + dz * dz > (attackRange * 1.6) * (attackRange * 1.6)) {
           wolf.state = 'hunt';
           break;
         }
@@ -546,7 +557,7 @@ export class WolfPack implements PreyProvider {
         const dz = this.denPos.z - wolf.pos.z;
         if (dx * dx + dz * dz < (PROWL_RADIUS * 0.8) * (PROWL_RADIUS * 0.8)) {
           wolf.state = 'wander';
-          wolf.target.copy(this.pickWanderTarget());
+          wolf.target.copy(this.pickWanderTarget(wolf));
         }
         break;
       }

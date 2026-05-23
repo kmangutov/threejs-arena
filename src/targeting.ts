@@ -19,10 +19,11 @@ export class TargetingSystem {
   private raycaster: THREE.Raycaster;
   private mouse: THREE.Vector2;
   private camera: THREE.Camera;
+  private scene: THREE.Scene;
   private targetables: Map<THREE.Object3D, { id: string; name: string; team: 'friendly' | 'enemy' | 'neutral' }>;
 
   public currentTarget: TargetInfo | null = null;
-  private originalMaterials: Map<THREE.Object3D, THREE.Material | THREE.Material[]> = new Map();
+  private targetRing: THREE.Mesh;
 
   // UI elements
   private nameElement: HTMLElement | null = null;
@@ -31,13 +32,35 @@ export class TargetingSystem {
   private healthFillElement: HTMLElement | null = null;
   private healthTextElement: HTMLElement | null = null;
 
-  constructor(camera: THREE.Camera) {
+  constructor(camera: THREE.Camera, scene: THREE.Scene) {
     this.raycaster = new THREE.Raycaster();
     this.mouse = new THREE.Vector2();
     this.camera = camera;
+    this.scene = scene;
     this.targetables = new Map();
+    this.targetRing = this.createTargetRing();
 
     this.onClick = this.onClick.bind(this);
+  }
+
+  private createTargetRing(): THREE.Mesh {
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(1.0, 1.12, 48),
+      new THREE.MeshBasicMaterial({
+        color: 0xffcc00,
+        transparent: true,
+        opacity: 0.9,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      })
+    );
+    ring.name = 'TargetRing';
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.04;
+    ring.renderOrder = 997;
+    ring.visible = false;
+    ring.userData.editorIgnore = true;
+    return ring;
   }
 
   /**
@@ -45,6 +68,7 @@ export class TargetingSystem {
    */
   attach(element: HTMLElement): void {
     element.addEventListener('click', this.onClick);
+    if (!this.targetRing.parent) this.scene.add(this.targetRing);
 
     // Get UI elements
     this.nameElement = document.getElementById('target-name');
@@ -122,9 +146,6 @@ export class TargetingSystem {
    * Set target to a specific mesh
    */
   setTarget(mesh: THREE.Object3D): void {
-    // Clear previous target highlight
-    this.clearHighlight();
-
     const data = this.targetables.get(mesh);
     if (!data) return;
 
@@ -141,10 +162,8 @@ export class TargetingSystem {
       direction
     };
 
-    // Apply highlight
-    this.applyHighlight(mesh, data.team);
-
     // Update UI
+    this.updateTargetRing();
     this.updateUI();
 
     console.log(`Target set: ${data.name} (${data.id})`);
@@ -154,46 +173,10 @@ export class TargetingSystem {
    * Clear current target
    */
   clearTarget(): void {
-    this.clearHighlight();
     this.currentTarget = null;
+    this.targetRing.visible = false;
     this.updateUI();
     console.log('Target cleared');
-  }
-
-  private applyHighlight(mesh: THREE.Object3D, team: 'friendly' | 'enemy' | 'neutral'): void {
-    // Find the actual mesh with material
-    mesh.traverse((child) => {
-      if (child instanceof THREE.Mesh && child.material) {
-        const mat = child.material as THREE.MeshStandardMaterial;
-        // Only apply highlight if material supports emissive
-        if (mat.emissive !== undefined) {
-          // Store original values
-          this.originalMaterials.set(child, {
-            emissive: mat.emissive.clone(),
-            emissiveIntensity: mat.emissiveIntensity
-          } as unknown as THREE.Material);
-
-          // Apply highlight without cloning
-          mat.emissive = new THREE.Color(team === 'friendly' ? 0x00ff00 : team === 'neutral' ? 0xffcc00 : 0xff0000);
-          mat.emissiveIntensity = 0.3;
-        }
-      }
-    });
-  }
-
-  private clearHighlight(): void {
-    // Restore original emissive values
-    this.originalMaterials.forEach((stored, mesh) => {
-      if (mesh instanceof THREE.Mesh) {
-        const mat = mesh.material as THREE.MeshStandardMaterial;
-        const original = stored as unknown as { emissive: THREE.Color; emissiveIntensity: number };
-        if (mat.emissive !== undefined && original.emissive) {
-          mat.emissive.copy(original.emissive);
-          mat.emissiveIntensity = original.emissiveIntensity;
-        }
-      }
-    });
-    this.originalMaterials.clear();
   }
 
   /**
@@ -213,7 +196,19 @@ export class TargetingSystem {
     this.currentTarget.direction = targetPos.clone().sub(playerPosition);
 
     // Update UI with current info
+    this.updateTargetRing();
     this.updateUI();
+  }
+
+  private updateTargetRing(): void {
+    if (!this.currentTarget) return;
+    const entity = this.currentTarget.mesh.userData.gameEntity as GameEntity | undefined;
+    const targetPos = new THREE.Vector3();
+    this.currentTarget.mesh.getWorldPosition(targetPos);
+    const radius = Math.max(0.45, entity?.radius ?? 0.7);
+    this.targetRing.position.set(targetPos.x, targetPos.y + 0.045, targetPos.z);
+    this.targetRing.scale.setScalar(radius);
+    this.targetRing.visible = true;
   }
 
   private updateUI(): void {
