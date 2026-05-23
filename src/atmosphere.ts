@@ -134,7 +134,7 @@ export class Atmosphere {
     this.grade.uniforms.uSaturation.value = opts.saturation ?? 1.12;
     this.grade.uniforms.uContrast.value = opts.contrast ?? 1.04;
     this.grade.uniforms.uWarmth.value = opts.warmth ?? 0.05;
-    this.grade.uniforms.uShadowCool.value = opts.shadowCool ?? 0.03;
+    this.grade.uniforms.uShadowCool.value = opts.shadowCool ?? 0.015;
     this.composer.addPass(this.grade);
 
     // Vignette: VignetteShader's darkness=1 is no darkening; higher

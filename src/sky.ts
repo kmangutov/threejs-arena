@@ -402,9 +402,9 @@ export class SkyEnvironment extends THREE.Group {
     const red = new THREE.Color(0xff6347);
     const darkRed = new THREE.Color(0xd32f2f);
     const skyBlue = new THREE.Color(0x87ceeb);
-    const darkSky = new THREE.Color(0x0d1321);
-    const nightSky = new THREE.Color(0x1c2331);
-    const moon = new THREE.Color(0xe6e8fa);
+    const darkSky = new THREE.Color(0x151b24);
+    const nightSky = new THREE.Color(0x202936);
+    const moon = new THREE.Color(0xf0f4ff);
 
     const isInDarkTransition =
       (timeInHours >= darknessStart && timeInHours <= sunset) ||
@@ -461,12 +461,12 @@ export class SkyEnvironment extends THREE.Group {
       );
     } else {
       sunElevation *= 0.5;
-      this.sunColor.copy(moon).multiplyScalar(1.8);
+      this.sunColor.copy(moon).multiplyScalar(1.45);
       this.lowerSkyColor.copy(darkSky);
       this.upperSkyColor.copy(nightSky);
-      this.sun.intensity = 0.35;
-      this.ambient.intensity = 0.12;
-      this.hemi.intensity = 0.1;
+      this.sun.intensity = 0.42;
+      this.ambient.intensity = 0.2;
+      this.hemi.intensity = 0.18;
       this.clouds.visible = false;
       this.stars.visible = true;
     }
