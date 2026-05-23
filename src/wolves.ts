@@ -14,7 +14,7 @@
 import * as THREE from 'three';
 import { getTerrainHeight } from './terrain';
 import type { Collider } from './arena';
-import { combatContactRange, emitDamageSplat, emitHealSplat, maintainCombatSpacing, type PreyRef, type PreyProvider } from './prey';
+import { combatContactRange, emitDamageSplat, emitHealSplat, maintainCombatSpacing, type CombatTargetRef, type PreyRef, type PreyProvider } from './prey';
 import { resolveAnimalPhysics } from './animal-physics';
 
 const WALK_SPEED = 1.8;
@@ -52,7 +52,7 @@ interface Wolf {
   yaw: number;
   state: WolfState;
   target: THREE.Vector3;
-  prey: PreyRef | null;
+  prey: CombatTargetRef | null;
   attackTimer: number;     // counts down between bites
   stateTimer: number;
   walkPhase: number;
@@ -63,7 +63,7 @@ interface Wolf {
   lastHitAt: number;
   id: string;
   name: string;
-  aggro: Map<string, { ref: PreyRef; score: number }>;
+  aggro: Map<string, { ref: CombatTargetRef; score: number }>;
   prowlCenter: THREE.Vector3;
 }
 
@@ -430,14 +430,14 @@ export class WolfPack implements PreyProvider {
     };
   }
 
-  private addAggro(wolf: Wolf, ref: PreyRef, amount: number): void {
+  private addAggro(wolf: Wolf, ref: CombatTargetRef, amount: number): void {
     if (ref.id === wolf.id) return;
     const existing = wolf.aggro.get(ref.id);
     wolf.aggro.set(ref.id, { ref, score: (existing?.score ?? 0) + amount });
   }
 
-  private chooseAggroTarget(wolf: Wolf): PreyRef | null {
-    let best: PreyRef | null = null;
+  private chooseAggroTarget(wolf: Wolf): CombatTargetRef | null {
+    let best: CombatTargetRef | null = null;
     let bestScore = 0;
     for (const [id, entry] of wolf.aggro) {
       entry.score *= 0.995;
@@ -502,7 +502,7 @@ export class WolfPack implements PreyProvider {
         targetZ = wolf.prey.pos.z;
         moveSpeed = HUNT_SPEED;
         // Scare the prey as we close in.
-        wolf.prey.scare(wolf.pos.x, wolf.pos.z, 1500);
+        wolf.prey.scare?.(wolf.pos.x, wolf.pos.z, 1500);
         // In bite range → transition to attack
         const dx = targetX - wolf.pos.x;
         const dz = targetZ - wolf.pos.z;

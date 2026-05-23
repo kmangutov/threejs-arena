@@ -27,6 +27,10 @@ export interface PreyRef extends EntityRefLike {
   scare(fromX: number, fromZ: number, durationMs: number): void;
 }
 
+export type CombatTargetRef = EntityRefLike & {
+  scare?: (fromX: number, fromZ: number, durationMs: number) => void;
+};
+
 export interface PreyProvider {
   findNearestPrey(pos: THREE.Vector3, maxDist: number): PreyRef | null;
   forEachPrey(fn: (ref: PreyRef) => void): void;
@@ -43,7 +47,7 @@ export interface PreyState {
   fleeFromZ: number;
   /** Last time HP changed — drives the HP bar fade. */
   lastHitAt: number;
-  combatTarget: PreyRef | null;
+  combatTarget: CombatTargetRef | null;
   attackTimer: number;
 }
 
@@ -86,11 +90,11 @@ export function healPreyState(state: PreyState, amount: number): number {
   return state.hp - before;
 }
 
-export function combatContactRange(attackerRadius: number, target: PreyRef, buffer = 0.15): number {
-  return attackerRadius + target.radius + buffer;
+export function combatContactRange(attackerRadius: number, target: CombatTargetRef, buffer = 0.15): number {
+  return attackerRadius + (target.radius ?? 0.6) + buffer;
 }
 
-export function maintainCombatSpacing(pos: THREE.Vector3, target: PreyRef, range: number): void {
+export function maintainCombatSpacing(pos: THREE.Vector3, target: CombatTargetRef, range: number): void {
   const dx = pos.x - target.pos.x;
   const dz = pos.z - target.pos.z;
   const dist = Math.hypot(dx, dz);
