@@ -6,11 +6,12 @@
  */
 
 import * as THREE from 'three';
+import type { EntityRefLike, EntityTeam } from './game-entity';
 
-export interface PreyRef {
+export interface PreyRef extends EntityRefLike {
   id: string;
   name: string;
-  team: 'friendly' | 'enemy' | 'neutral';
+  team: EntityTeam;
   mesh: THREE.Object3D;
   /** Live world position (updated each frame by the owner). */
   readonly pos: THREE.Vector3;
@@ -18,7 +19,9 @@ export interface PreyRef {
   readonly hp: number;
   readonly maxHp: number;
   /** Returns true if this hit killed the prey. */
-  damage(amount: number, attacker?: PreyRef): boolean;
+  damage(amount: number, attacker?: EntityRefLike): boolean;
+  /** Returns the actual amount restored. */
+  heal(amount: number): number;
   /** Mark prey as panicked away from a threat for `durationMs`. */
   scare(fromX: number, fromZ: number, durationMs: number): void;
 }
@@ -68,4 +71,16 @@ export function clampToBounds(pos: THREE.Vector3, bounds: number): boolean {
 
 export function emitDamageSplat(mesh: THREE.Object3D, amount: number): void {
   mesh.userData.damageSplats?.spawnDamage?.(mesh, amount);
+}
+
+export function emitHealSplat(mesh: THREE.Object3D, amount: number): void {
+  mesh.userData.damageSplats?.spawnHeal?.(mesh, amount);
+}
+
+export function healPreyState(state: PreyState, amount: number): number {
+  if (state.dead || state.hp >= state.maxHp) return 0;
+  const before = state.hp;
+  state.hp = Math.min(state.maxHp, state.hp + amount);
+  state.lastHitAt = performance.now();
+  return state.hp - before;
 }

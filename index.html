@@ -54,6 +54,32 @@
       font-size: 12px;
       color: #aaa;
     }
+    #target-health {
+      display: none;
+      margin-top: 8px;
+      height: 16px;
+      background: rgba(0, 0, 0, 0.75);
+      border: 1px solid #222;
+      border-radius: 3px;
+      overflow: hidden;
+      position: relative;
+    }
+    #target-health-fill {
+      height: 100%;
+      width: 100%;
+      background: linear-gradient(to right, #7d1515, #d82b2b);
+    }
+    #target-health-text {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      font-size: 11px;
+      font-weight: bold;
+      text-shadow: 1px 1px 2px #000;
+    }
     #target-debuffs {
       margin-top: 8px;
       display: flex;
@@ -260,6 +286,10 @@
   <div id="target-pane">
     <div class="label">Target</div>
     <div class="name" id="target-name">No Target</div>
+    <div id="target-health">
+      <div id="target-health-fill"></div>
+      <div id="target-health-text"></div>
+    </div>
     <div class="info" id="target-info"></div>
     <div id="target-debuffs"></div>
   </div>

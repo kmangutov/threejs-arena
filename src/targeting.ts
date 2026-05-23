@@ -4,6 +4,7 @@
 
 import * as THREE from 'three';
 import { prettyVec, dirToYaw, flattenXZ } from './coords';
+import type { GameEntity } from './game-entity';
 
 export interface TargetInfo {
   id: string;
@@ -26,6 +27,9 @@ export class TargetingSystem {
   // UI elements
   private nameElement: HTMLElement | null = null;
   private infoElement: HTMLElement | null = null;
+  private healthElement: HTMLElement | null = null;
+  private healthFillElement: HTMLElement | null = null;
+  private healthTextElement: HTMLElement | null = null;
 
   constructor(camera: THREE.Camera) {
     this.raycaster = new THREE.Raycaster();
@@ -45,6 +49,9 @@ export class TargetingSystem {
     // Get UI elements
     this.nameElement = document.getElementById('target-name');
     this.infoElement = document.getElementById('target-info');
+    this.healthElement = document.getElementById('target-health');
+    this.healthFillElement = document.getElementById('target-health-fill');
+    this.healthTextElement = document.getElementById('target-health-text');
   }
 
   /**
@@ -216,12 +223,22 @@ export class TargetingSystem {
       this.nameElement.textContent = 'No Target';
       this.nameElement.style.color = '#888';
       this.infoElement.textContent = '';
+      if (this.healthElement) this.healthElement.style.display = 'none';
     } else {
       const { name, team, distance, direction } = this.currentTarget;
+      const entity = this.currentTarget.mesh.userData.gameEntity as GameEntity | undefined;
 
       // Set name with team color
       this.nameElement.textContent = name;
       this.nameElement.style.color = team === 'friendly' ? '#00ff88' : team === 'neutral' ? '#ffcc00' : '#ff4444';
+      if (this.healthElement && this.healthFillElement && this.healthTextElement && entity && entity.maxHp > 0) {
+        const pct = Math.max(0, Math.min(1, entity.hp / entity.maxHp));
+        this.healthElement.style.display = 'block';
+        this.healthFillElement.style.width = `${pct * 100}%`;
+        this.healthTextElement.textContent = `${Math.ceil(entity.hp)} / ${entity.maxHp}`;
+      } else if (this.healthElement) {
+        this.healthElement.style.display = 'none';
+      }
 
       // Set info
       const yawDeg = (dirToYaw(direction) * 180 / Math.PI).toFixed(0);

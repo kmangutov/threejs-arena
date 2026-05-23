@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import type { Collider } from './arena';
 import { Holdable, HoldableProvider } from './holdable';
 import type { PreyRef, PreyProvider, PreyState } from './prey';
-import { emitDamageSplat, makePreyState } from './prey';
+import { emitDamageSplat, emitHealSplat, healPreyState, makePreyState } from './prey';
 import { resolveAnimalPhysics } from './animal-physics';
 
 const WALK_SPEED = 1.6;
@@ -271,6 +271,11 @@ export class DogPack implements HoldableProvider, PreyProvider {
           return true;
         }
         return false;
+      },
+      heal: (amount: number) => {
+        const healed = healPreyState(dog.prey, amount);
+        if (healed > 0) emitHealSplat(dog.parts.group, healed);
+        return healed;
       },
       scare: (fromX, fromZ, durMs) => {
         if (dog.prey.dead) return;

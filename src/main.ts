@@ -44,7 +44,8 @@ import { WolfPack } from './wolves';
 import { Rivers } from './rivers';
 import { HpBarOverlay } from './hp-bars';
 import { Atmosphere } from './atmosphere';
-import type { PreyProvider, PreyRef } from './prey';
+import type { PreyProvider } from './prey';
+import { BasicGameEntity, GameEntity, GameEntityRegistry, RefGameEntity } from './game-entity';
 
 // ============================================================================
 // Character Factory
@@ -108,6 +109,7 @@ interface GameState {
   hpBars: HpBarOverlay;
   atmosphere: Atmosphere;
   livingProviders: PreyProvider[];
+  entityRegistry: GameEntityRegistry;
 
   // Phase 4: Network state
   mode: GameMode;
@@ -269,14 +271,13 @@ function updateDebuffDisplay(state: GameState): void {
 const CC_DEBUFFS = ['blind', 'polymorph'];
 
 function updateCCVisuals(state: GameState): void {
-  // Check each entity for CC debuffs
-  for (const [entityId, entityMesh] of state.entities) {
-    if (entityId === 'player') continue; // Player uses CharacterView
+  for (const entity of state.entityRegistry.all()) {
+    if (entity.id === 'player') continue; // Player uses CharacterView
 
-    const debuffs = state.debuffs.getDebuffs(entityId);
+    const debuffs = entity.getDebuffs(state.debuffs);
     const hasCC = debuffs.some(d => CC_DEBUFFS.includes(d.id));
 
-    if (hasCC && !state.ccCubes.has(entityId)) {
+    if (hasCC && !state.ccCubes.has(entity.id)) {
       // Entity just got CC'd - create cube and hide original
       const cube = new THREE.Mesh(
         new THREE.BoxGeometry(1, 1, 1),
@@ -286,28 +287,28 @@ function updateCCVisuals(state: GameState): void {
           metalness: 0.3
         })
       );
-      cube.position.copy(entityMesh.position);
+      cube.position.copy(entity.mesh.position);
       cube.position.y = 1; // Center cube at entity height
       cube.castShadow = true;
       state.scene.add(cube);
-      state.ccCubes.set(entityId, cube);
+      state.ccCubes.set(entity.id, cube);
 
       // Hide original entity
-      entityMesh.visible = false;
-    } else if (!hasCC && state.ccCubes.has(entityId)) {
+      entity.mesh.visible = false;
+    } else if (!hasCC && state.ccCubes.has(entity.id)) {
       // CC expired - remove cube and show original
-      const cube = state.ccCubes.get(entityId)!;
+      const cube = state.ccCubes.get(entity.id)!;
       state.scene.remove(cube);
       cube.geometry.dispose();
       (cube.material as THREE.Material).dispose();
-      state.ccCubes.delete(entityId);
+      state.ccCubes.delete(entity.id);
 
       // Show original entity
-      entityMesh.visible = true;
-    } else if (hasCC && state.ccCubes.has(entityId)) {
+      entity.mesh.visible = true;
+    } else if (hasCC && state.ccCubes.has(entity.id)) {
       // Update cube position and rotation
-      const cube = state.ccCubes.get(entityId)!;
-      cube.position.copy(entityMesh.position);
+      const cube = state.ccCubes.get(entity.id)!;
+      cube.position.copy(entity.mesh.position);
       cube.position.y = 1;
       cube.rotation.y += 0.02;
       cube.rotation.x += 0.01;
@@ -315,33 +316,20 @@ function updateCCVisuals(state: GameState): void {
   }
 }
 
-function makePlayerCombatRef(state: GameState): PreyRef {
-  return {
-    id: 'player',
-    name: 'Player',
-    team: 'friendly',
-    mesh: state.playerView.root,
-    get pos() { return state.player.position; },
-    get alive() { return true; },
-    get hp() { return 1; },
-    get maxHp() { return 1; },
-    damage: (amount: number) => {
-      state.damageSplats.spawnDamage(state.playerView.root, amount);
-      return false;
-    },
-    scare: () => {},
-  };
-}
-
 function syncLivingTargetables(state: GameState): void {
   for (const provider of state.livingProviders) {
     provider.forEachPrey((ref) => {
       ref.mesh.userData.damageSplats = state.damageSplats;
       ref.mesh.userData.livingRef = ref;
+      const entity = state.entityRegistry.register(new RefGameEntity(ref));
       state.entities.set(ref.id, ref.mesh);
-      state.targeting.registerTargetable(ref.mesh, ref.id, ref.name, ref.team);
+      state.targeting.registerTargetable(ref.mesh, entity.id, entity.name, entity.team);
     });
   }
+}
+
+function targetEntity(state: GameState, entityId: string | null | undefined): GameEntity | null {
+  return state.entityRegistry.get(entityId);
 }
 
 async function setClass(state: GameState, className: ClassName): Promise<void> {
@@ -368,6 +356,15 @@ async function setClass(state: GameState, className: ClassName): Promise<void> {
   state.playerView.root.position.copy(state.player.position);
   state.scene.add(state.playerView.root);
   state.player.mesh = state.playerView.root;
+  state.entityRegistry.register(new BasicGameEntity({
+    id: 'player',
+    name: `Player (${className})`,
+    team: 'friendly',
+    mesh: state.playerView.root,
+    hp: 100,
+    splats: state.damageSplats,
+    position: state.player.position,
+  }));
 }
 
 function toggleClassSelector(state: GameState): void {
@@ -434,8 +431,8 @@ function tryUseAbility(state: GameState, key: string): void {
     casts: state.casts,
     projectiles: state.projectiles,
     getEntityPos: (id) => {
-      const ent = state.entities.get(id);
-      return ent ? ent.position.clone() : null;
+      const ent = targetEntity(state, id);
+      return ent ? ent.pos.clone() : null;
     },
     setEntityPos: (id, pos) => {
       if (id === 'player') {
@@ -454,6 +451,10 @@ function tryUseAbility(state: GameState, key: string): void {
     },
     spawnHeal: (entityId, min, max) => {
       spawnHeal(state, entityId, min, max);
+    },
+    applyDebuff: (entityId, debuff) => {
+      const entity = targetEntity(state, entityId);
+      if (entity) entity.applyDebuff(state.debuffs, debuff);
     }
   };
 
@@ -509,13 +510,13 @@ function flashSlotError(key: string): void {
 function updateAutoAttack(state: GameState, delta: number): void {
   if (!state.autoAttackTargetId) return;
 
-  const targetMesh = state.entities.get(state.autoAttackTargetId);
-  if (!targetMesh) {
+  const target = targetEntity(state, state.autoAttackTargetId);
+  if (!target?.alive) {
     state.autoAttackTargetId = null;
     return;
   }
 
-  const dist = state.player.position.distanceTo(targetMesh.position);
+  const dist = state.player.position.distanceTo(target.pos);
   // Small leeway on top of the ability range so jitter at the edge doesn't bounce.
   const inRange = dist <= state.autoAttackRange + 0.5;
 
@@ -537,22 +538,17 @@ function updateAutoAttack(state: GameState, delta: number): void {
 }
 
 function spawnDamage(state: GameState, entityId: string, min: number, max: number): void {
-  const entity = state.entities.get(entityId);
+  const entity = targetEntity(state, entityId);
   if (!entity) return;
   const amount = Math.floor(min + Math.random() * (max - min + 1));
-  const living = entity.userData.livingRef as PreyRef | undefined;
-  if (living?.alive) {
-    living.damage(amount, makePlayerCombatRef(state));
-  } else {
-    state.damageSplats.spawnDamage(entity, amount);
-  }
+  entity.damage(amount, targetEntity(state, 'player') ?? undefined);
 }
 
 function spawnHeal(state: GameState, entityId: string, min: number, max: number): void {
-  const entity = state.entities.get(entityId);
+  const entity = targetEntity(state, entityId);
   if (!entity) return;
   const amount = Math.floor(min + Math.random() * (max - min + 1));
-  state.damageSplats.spawnHeal(entity, amount);
+  entity.heal(amount);
 }
 
 function togglePickup(state: GameState): void {
@@ -820,15 +816,6 @@ async function init(): Promise<GameState> {
   const targeting = new TargetingSystem(cameraRig.camera);
   targeting.attach(renderer.domElement);
 
-  if (mode === 'standalone') {
-    for (const [id, mesh] of entities) {
-      if (id !== 'player') {
-        const def = INITIAL_ENTITIES.find(e => e.id === id)!;
-        targeting.registerTargetable(mesh, id, def.name, def.team);
-      }
-    }
-  }
-
   const debugElement = document.getElementById('debug-info');
 
   window.addEventListener('resize', () => {
@@ -844,6 +831,8 @@ async function init(): Promise<GameState> {
   const debuffs = new DebuffManager();
   const casts = new CastSystem();
   const projectiles = new ProjectileSystem(scene);
+  const damageSplats = new DamageSplatSystem(scene);
+  const entityRegistry = new GameEntityRegistry();
 
   // Create network game if in multiplayer mode
   let network: NetworkGame | null = null;
@@ -891,7 +880,7 @@ async function init(): Promise<GameState> {
     debuffs,
     casts,
     projectiles,
-    damageSplats: new DamageSplatSystem(scene),
+    damageSplats,
     dogs: new DogPack(scene, 6, 18, getTerrainHeightData()),
     rabbits: new RabbitWarren(scene, 14, 18, getTerrainHeightData()),
     cats: new CatColony(scene, 5, 18, getTerrainHeightData()),
@@ -923,8 +912,35 @@ async function init(): Promise<GameState> {
     hpBars: undefined as unknown as HpBarOverlay,
     atmosphere: undefined as unknown as Atmosphere,
     livingProviders: [],
+    entityRegistry,
   };
   liveState = state;
+
+  entityRegistry.register(new BasicGameEntity({
+    id: 'player',
+    name: playerDef.name,
+    team: playerDef.team,
+    mesh: playerView.root,
+    hp: 100,
+    splats: damageSplats,
+    position: player.position,
+  }));
+
+  if (mode === 'standalone') {
+    for (const [id, mesh] of entities) {
+      if (id === 'player') continue;
+      const def = INITIAL_ENTITIES.find(e => e.id === id)!;
+      const entity = entityRegistry.register(new BasicGameEntity({
+        id,
+        name: def.name,
+        team: def.team,
+        mesh,
+        hp: 100,
+        splats: damageSplats,
+      }));
+      targeting.registerTargetable(mesh, entity.id, entity.name, entity.team);
+    }
+  }
 
   // Dev tools: editor (`), snapshots (F2/F3), collider debug (F4)
   state.editor = new SceneEditor(scene, cameraRig.camera, renderer.domElement);
@@ -966,8 +982,8 @@ async function init(): Promise<GameState> {
   refreshColliders();
   syncLivingTargetables(state);
 
-  // Floating HP bars over wounded living animals.
-  state.hpBars = new HpBarOverlay(scene, state.livingProviders);
+  // Floating HP bars over any wounded registered entity.
+  state.hpBars = new HpBarOverlay(scene, () => state.entityRegistry.all());
 
   // Atmosphere & post-processing — bloom, painterly color grade, vignette,
   // ambient motes. Last in init so it wraps the full live scene.

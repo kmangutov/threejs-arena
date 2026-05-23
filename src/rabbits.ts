@@ -39,7 +39,7 @@ interface RabbitParts {
 type RabbitState = 'hop' | 'rest' | 'stopped';
 
 import type { PreyRef, PreyProvider, PreyState } from './prey';
-import { emitDamageSplat, makePreyState } from './prey';
+import { emitDamageSplat, emitHealSplat, healPreyState, makePreyState } from './prey';
 
 interface Rabbit {
   parts: RabbitParts;
@@ -275,6 +275,11 @@ export class RabbitWarren implements HoldableProvider, PreyProvider {
           return true;
         }
         return false;
+      },
+      heal: (amount: number) => {
+        const healed = healPreyState(r.prey, amount);
+        if (healed > 0) emitHealSplat(r.parts.group, healed);
+        return healed;
       },
       scare: (fromX: number, fromZ: number, durationMs: number) => {
         if (r.prey.dead) return;

@@ -1,15 +1,15 @@
 /**
- * HP-bar overlay — draws a small floating bar above any prey that's wounded
+ * HP-bar overlay — draws a small floating bar above any entity that's wounded
  * or recently engaged. Bars are Sprite billboards (always face camera) with
  * a canvas texture, so they're cheap and scale-correct across the scene.
  *
- * The overlay scans all registered prey providers each frame and reuses a
+ * The overlay scans the shared entity registry each frame and reuses a
  * pool of sprites keyed by mesh.uuid, so spawning/despawning prey doesn't
  * leak GPU resources.
  */
 
 import * as THREE from 'three';
-import type { PreyRef } from './prey';
+import type { GameEntity } from './game-entity';
 
 interface Tracked {
   sprite: THREE.Sprite;
@@ -24,52 +24,46 @@ interface Tracked {
 
 const FADE_DELAY_MS = 4000;   // bar visible this long after last damage
 
-export interface PreyEnumerator {
-  forEachPrey(fn: (ref: PreyRef) => void): void;
-}
-
 export class HpBarOverlay {
   private scene: THREE.Scene;
-  private providers: PreyEnumerator[];
+  private getEntities: () => Iterable<GameEntity>;
   private tracked = new Map<string, Tracked>();
 
-  constructor(scene: THREE.Scene, providers: PreyEnumerator[]) {
+  constructor(scene: THREE.Scene, getEntities: () => Iterable<GameEntity>) {
     this.scene = scene;
-    this.providers = providers;
+    this.getEntities = getEntities;
   }
 
   update(): void {
     const now = performance.now();
     const seen = new Set<string>();
 
-    for (const prov of this.providers) {
-      prov.forEachPrey((ref) => {
+    for (const entity of this.getEntities()) {
         // Only render bars for wounded or recently-hit prey — full-HP, undamaged
         // animals don't need clutter.
-        const isWounded = ref.hp < ref.maxHp;
+        const isWounded = entity.hp < entity.maxHp;
         if (!isWounded) return;
 
-        const key = ref.mesh.uuid;
+        const key = entity.mesh.uuid;
         seen.add(key);
         let t = this.tracked.get(key);
         if (!t) {
-          t = this.makeBar(ref.mesh);
+          t = this.makeBar(entity.mesh);
           this.tracked.set(key, t);
         }
-        if (t.lastHp !== ref.hp || t.lastMax !== ref.maxHp) {
-          this.paint(t, ref.hp, ref.maxHp);
-          t.lastHp = ref.hp;
-          t.lastMax = ref.maxHp;
+        if (t.lastHp !== entity.hp || t.lastMax !== entity.maxHp) {
+          this.paint(t, entity.hp, entity.maxHp);
+          t.lastHp = entity.hp;
+          t.lastMax = entity.maxHp;
         }
         t.lastSeen = now;
 
         // Position above the prey mesh (use bounding sphere center + radius).
-        ref.mesh.updateWorldMatrix(true, false);
+        entity.mesh.updateWorldMatrix(true, false);
         const pos = new THREE.Vector3();
-        ref.mesh.getWorldPosition(pos);
+        entity.mesh.getWorldPosition(pos);
         t.sprite.position.set(pos.x, pos.y + 1.6, pos.z);
         t.sprite.visible = true;
-      });
     }
 
     // Hide / drop bars whose owners have gone stale.

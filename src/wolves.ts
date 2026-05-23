@@ -14,7 +14,7 @@
 import * as THREE from 'three';
 import { getTerrainHeight } from './terrain';
 import type { Collider } from './arena';
-import { emitDamageSplat, type PreyRef, type PreyProvider } from './prey';
+import { emitDamageSplat, emitHealSplat, type PreyRef, type PreyProvider } from './prey';
 import { resolveAnimalPhysics } from './animal-physics';
 
 const WALK_SPEED = 1.8;
@@ -408,6 +408,15 @@ export class WolfPack implements PreyProvider {
           return true;
         }
         return false;
+      },
+      heal: (amount: number) => {
+        if (wolf.dead || wolf.hp >= wolf.maxHp) return 0;
+        const before = wolf.hp;
+        wolf.hp = Math.min(wolf.maxHp, wolf.hp + amount);
+        wolf.lastHitAt = performance.now();
+        const healed = wolf.hp - before;
+        if (healed > 0) emitHealSplat(wolf.parts.group, healed);
+        return healed;
       },
       scare: () => {},
     };

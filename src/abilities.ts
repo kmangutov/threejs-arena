@@ -3,7 +3,7 @@
  */
 
 import * as THREE from 'three';
-import { CooldownManager, DebuffManager, CastSystem, ProjectileSystem } from './systems';
+import { CooldownManager, DebuffManager, CastSystem, ProjectileSystem, Debuff } from './systems';
 import { ARENA_BOUND } from './shared/physics';
 
 // ============================================================================
@@ -38,6 +38,7 @@ export interface AbilityContext {
   flashHit: (entityId: string) => void;
   spawnDamage: (entityId: string, min: number, max: number) => void;
   spawnHeal: (entityId: string, min: number, max: number) => void;
+  applyDebuff: (entityId: string, debuff: Omit<Debuff, 'expiresAt'>) => void;
 }
 
 // ============================================================================
@@ -92,7 +93,7 @@ const rogueAbilities: AbilityDef[] = [
     execute: (ctx) => {
       if (!ctx.targetId) return;
 
-      ctx.debuffs.applyDebuff(ctx.targetId, {
+      ctx.applyDebuff(ctx.targetId, {
         id: 'blind',
         name: 'Blind',
         duration: 9,
@@ -192,7 +193,7 @@ const mageAbilities: AbilityDef[] = [
         castTime: 1.5,
         targetId,
         onComplete: () => {
-          ctx.debuffs.applyDebuff(targetId, {
+          ctx.applyDebuff(targetId, {
             id: 'polymorph',
             name: 'Polymorph',
             duration: 9,

@@ -8,7 +8,7 @@ import * as THREE from 'three';
 import type { Collider } from './arena';
 import { Holdable, HoldableProvider } from './holdable';
 import type { PreyRef, PreyProvider, PreyState } from './prey';
-import { emitDamageSplat, makePreyState } from './prey';
+import { emitDamageSplat, emitHealSplat, healPreyState, makePreyState } from './prey';
 import { resolveAnimalPhysics } from './animal-physics';
 
 const WALK_SPEED = 1.4;
@@ -285,6 +285,11 @@ export class CatColony implements HoldableProvider, PreyProvider {
           return true;
         }
         return false;
+      },
+      heal: (amount: number) => {
+        const healed = healPreyState(c.prey, amount);
+        if (healed > 0) emitHealSplat(c.parts.group, healed);
+        return healed;
       },
       scare: (fromX, fromZ, durMs) => {
         if (c.prey.dead) return;
