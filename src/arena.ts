@@ -64,32 +64,69 @@ function getPillarBump(): THREE.CanvasTexture {
 /**
  * Create a pillar at the given position
  */
-function createPillar(x: number, z: number): THREE.Mesh {
-  const geometry = new THREE.CylinderGeometry(
-    PILLAR_RADIUS,
-    PILLAR_RADIUS * 1.1,
-    PILLAR_HEIGHT,
-    16
-  );
-  const material = new THREE.MeshStandardMaterial({
+function createStoneMaterial(color = 0xb09a78): THREE.MeshStandardMaterial {
+  return new THREE.MeshStandardMaterial({
+    color,
     map: getPillarDiffuse(),
     bumpMap: getPillarBump(),
-    bumpScale: 1.6,
+    bumpScale: 1.2,
     roughness: 0.95,
-    metalness: 0.04
+    metalness: 0.0,
   });
-  const pillar = new THREE.Mesh(geometry, material);
-  pillar.position.set(x, PILLAR_HEIGHT / 2, z);
-  pillar.castShadow = true;
-  pillar.receiveShadow = true;
+}
+
+function addStonePiece(
+  group: THREE.Group,
+  geometry: THREE.BufferGeometry,
+  material: THREE.Material,
+  y: number,
+): void {
+  const piece = new THREE.Mesh(geometry, material);
+  piece.position.y = y;
+  piece.castShadow = true;
+  piece.receiveShadow = true;
+  group.add(piece);
+}
+
+function createPillar(x: number, z: number): THREE.Group {
+  const pillar = new THREE.Group();
   pillar.name = 'Pillar';
+  pillar.position.set(x, 0, z);
+  const material = createStoneMaterial();
+
+  // Chunky layered silhouette: broad foot, tapered shaft and capital. Eight
+  // radial segments preserve the hand-shaped TBC arena profile.
+  addStonePiece(
+    pillar,
+    new THREE.CylinderGeometry(PILLAR_RADIUS * 1.3, PILLAR_RADIUS * 1.5, 0.5, 8),
+    material,
+    0.25,
+  );
+  addStonePiece(
+    pillar,
+    new THREE.CylinderGeometry(PILLAR_RADIUS * 0.86, PILLAR_RADIUS * 1.08, PILLAR_HEIGHT - 0.8, 8),
+    material,
+    PILLAR_HEIGHT * 0.5,
+  );
+  addStonePiece(
+    pillar,
+    new THREE.CylinderGeometry(PILLAR_RADIUS * 1.28, PILLAR_RADIUS * 0.98, 0.45, 8),
+    material,
+    PILLAR_HEIGHT - 0.22,
+  );
+  addStonePiece(
+    pillar,
+    new THREE.ConeGeometry(PILLAR_RADIUS * 0.42, 0.8, 6),
+    material,
+    PILLAR_HEIGHT + 0.35,
+  );
 
   // Register collider
   colliders.push({
     type: 'cylinder',
     x,
     z,
-    radius: PILLAR_RADIUS * 1.1, // Use base radius
+    radius: PILLAR_RADIUS * 1.45, // Match the broad visible foot
     height: PILLAR_HEIGHT
   });
 
@@ -111,11 +148,7 @@ function createRamp(
 
   // Main box
   const boxGeometry = new THREE.BoxGeometry(width, height, depth);
-  const material = new THREE.MeshStandardMaterial({
-    color: 0x6b5b4f,
-    roughness: 0.85,
-    metalness: 0.05
-  });
+  const material = createStoneMaterial(0x9c8465);
   const box = new THREE.Mesh(boxGeometry, material);
   box.position.y = height / 2;
   box.castShadow = true;
@@ -153,11 +186,7 @@ function createBoundaryWalls(): THREE.Group {
   const halfSize = ARENA_SIZE / 2;
   const entranceWidth = 6; // Width of the gap for each entrance
 
-  const wallMaterial = new THREE.MeshStandardMaterial({
-    color: 0x555555,
-    roughness: 0.7,
-    metalness: 0.2
-  });
+  const wallMaterial = createStoneMaterial(0xa28b6e);
 
   // Create wall segment and register collider
   const createWallSegment = (
@@ -239,8 +268,8 @@ export function createArena(): THREE.Group {
   terrainHeightData = heightData;
   arena.add(terrain);
 
-  // (Removed full-map water plane: it covered the whole arena at y=0.05 and
-  // washed the low central combat area teal. Real water is the Rivers system.)
+  // Rivers provide water where it belongs. A full-map water sheet made the
+  // central lowlands read as a flooded teal basin.
 
   // 4 main pillars in cardinal positions (Nagrand-style)
   const pillarOffset = 8;

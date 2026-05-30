@@ -6,6 +6,8 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "screenshot": "node tools/screenshot.mjs",
+    "render:structures": "node tools/render-structures.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },

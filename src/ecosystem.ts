@@ -1,6 +1,6 @@
 /**
  * Generative ecosystem — seeded placement of grass tufts, flowers, rocks,
- * mushrooms, and small huts across the arena floor.
+ * mushrooms, huts, and village clusters across the arena surroundings.
  *
  * The system exposes its parameters via `userData.editableParams`, which the
  * SceneEditor picks up and renders as live-editable controls. Hitting
@@ -15,6 +15,8 @@ import * as THREE from 'three';
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { GrassField } from './grass';
 import type { Collider } from './arena';
+// @ts-ignore - shared JS builders are also consumed directly by the Node PNG renderer.
+import { createRoundHut, createVillageCluster } from './procedural-structures.js';
 
 export type Biome = 'grassland' | 'autumn' | 'tundra' | 'arid';
 
@@ -27,6 +29,7 @@ export interface EcosystemParams {
   rockCount: number;
   mushroomCount: number;
   hutCount: number;
+  villageCount: number;
   rockScale: number;
 }
 
@@ -41,6 +44,7 @@ export const DEFAULT_PARAMS: EcosystemParams = {
   rockCount: 220,
   mushroomCount: 60,
   hutCount: 6,
+  villageCount: 2,
   rockScale: 1.0,
 };
 
@@ -57,16 +61,14 @@ interface Palette {
 
 const PALETTES: Record<Biome, Palette> = {
   grassland: {
-    // Base sits in the ground's olive family; tip lifts to a soft yellow-green
-    // so blades blend with the sward instead of reading as neon sticks.
-    grass: [0x4e6b28, 0x9bbf55],
+    grass: [0x5b7835, 0xa6c45d],
     flower: [0xf2c14e, 0xe85d75, 0xf0eaf4, 0xa86fe4],
     rock: 0x7a7368,
     mushroomCap: 0xc44a3f,
     mushroomStem: 0xf3ead4,
     hutWall: 0x8a6a3d,
     hutRoof: 0x6a3a1f,
-    ground: 0x6f9a3e,
+    ground: 0x719342,
   },
   autumn: {
     grass: [0x8a5a1a, 0xb88340],
@@ -159,8 +161,8 @@ export class Ecosystem extends THREE.Group {
     this.grass.params = {
       ...this.grass.params,
       seed: this.params.seed ^ 0xA5A5,
-      // Grass fills much closer to center than props do — a bare combat ring
-      // looks artificial, so decouple it from the prop-exclusion innerRadius.
+      // Grass grows into the arena while larger props stay outside the
+      // combat ring. This matches WoW's dense ground cover without clutter.
       innerRadius: Math.min(this.params.innerRadius, 2.5),
       outerRadius: this.params.outerRadius,
       baseColor: palette.grass[0],
@@ -168,13 +170,23 @@ export class Ecosystem extends THREE.Group {
     };
     this.grass.rebuild();
 
-    // Huts placed first so rocks can avoid overlapping them.
+    // Structures are placed first so rocks can avoid overlapping their main
+    // silhouettes. Villages sit outside the combat ring as scenic landmarks.
     const hutsGroup = buildHuts(rng, this.params, palette, this.heightSampler);
+    const villagesGroup = buildVillages(rng, this.params, palette, this.heightSampler);
     const hutObstacles = hutsGroup.children.map(h => ({
       x: h.position.x,
       z: h.position.z,
       r: HUT_ROOF_RADIUS * (h.scale.x || 1) + 0.5,
     }));
+    const villageObstacles = (villagesGroup.userData.colliders as Collider[])
+      .map(c => ({
+        x: c.x,
+        z: c.z,
+        r: c.type === 'cylinder'
+          ? c.radius
+          : Math.sqrt(c.width * c.width + c.depth * c.depth) * 0.5,
+      }));
     // 4 arena pillars at (±8, ±8) with radius ~1.2.
     const pillarObstacles = [
       { x: -8, z: -8, r: 1.6 },
@@ -182,9 +194,10 @@ export class Ecosystem extends THREE.Group {
       { x: -8, z:  8, r: 1.6 },
       { x:  8, z:  8, r: 1.6 },
     ];
-    const obstacles = [...hutObstacles, ...pillarObstacles];
+    const obstacles = [...hutObstacles, ...villageObstacles, ...pillarObstacles];
 
     this.add(hutsGroup);
+    this.add(villagesGroup);
     this.add(buildFlowers(rng, this.params, palette, this.heightSampler));
     this.add(buildRocks(rng, this.params, palette, this.heightSampler, obstacles));
     this.add(buildMushrooms(rng, this.params, palette, this.heightSampler));
@@ -223,6 +236,10 @@ export class Ecosystem extends THREE.Group {
         const cols = child.userData.colliders as Collider[] | undefined;
         if (cols) out.push(...cols);
       }
+      if (child.name === 'Villages') {
+        const cols = child.userData.colliders as Collider[] | undefined;
+        if (cols) out.push(...cols);
+      }
     }
     return out;
   }
@@ -238,6 +255,7 @@ function ecosystemSchema() {
     { key: 'rockCount',     label: 'Rocks',         type: 'int' as const, min: 0, max: 300, step: 5 },
     { key: 'mushroomCount', label: 'Mushrooms',     type: 'int' as const, min: 0, max: 300, step: 5 },
     { key: 'hutCount',      label: 'Huts',          type: 'int' as const, min: 0, max: 20, step: 1 },
+    { key: 'villageCount',  label: 'Villages',      type: 'int' as const, min: 0, max: 4, step: 1 },
     { key: 'rockScale',     label: 'Rock scale',    type: 'float' as const, min: 0.3, max: 3.0, step: 0.05 },
   ];
 }
@@ -557,7 +575,10 @@ function buildHuts(
     // Huts sit just outside the combat zone, well inside the tree line.
     const [x, z] = sampleRadial(rng, p.innerRadius + 4, p.outerRadius - 8);
     const y = height(x, z);
-    const hut = buildSingleHut(palette, rng);
+    const hut = createRoundHut({
+      seed: Math.floor(rng() * 100000),
+      palette: toStructurePalette(palette),
+    }) as THREE.Group;
     hut.name = `Hut_${i}`;
     hut.position.set(x, y, z);
     hut.rotation.y = rng() * Math.PI * 2;
@@ -570,68 +591,83 @@ function buildHuts(
 
 // Hitbox derives directly from these primitive dimensions so collisions
 // match what the player sees.
-const HUT_WALL_RADIUS = 1.6;
-const HUT_WALL_BOTTOM_RADIUS = 1.75;
-const HUT_WALL_HEIGHT = 2.2;
-const HUT_ROOF_RADIUS = 2.2;
-const HUT_ROOF_HEIGHT = 1.7;
+const HUT_ROOF_RADIUS = 2.35;
 
-function buildSingleHut(palette: Palette, rng: () => number): THREE.Group {
-  const hut = new THREE.Group();
+function buildVillages(
+  rng: () => number,
+  p: EcosystemParams,
+  palette: Palette,
+  height: (x: number, z: number) => number,
+): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'Villages';
+  const colliders: Collider[] = [];
+  const structurePalette = toStructurePalette(palette);
 
-  // Walls: octagonal cylinder (looks more hand-built than a square).
-  const wallGeo = new THREE.CylinderGeometry(HUT_WALL_RADIUS, HUT_WALL_BOTTOM_RADIUS, HUT_WALL_HEIGHT, 8);
-  const wallMat = new THREE.MeshStandardMaterial({
-    color: palette.hutWall,
-    roughness: 0.95,
-    flatShading: true,
-  });
-  const walls = new THREE.Mesh(wallGeo, wallMat);
-  walls.position.y = HUT_WALL_HEIGHT / 2;
-  walls.castShadow = true;
-  walls.receiveShadow = true;
-  walls.name = 'Walls';
-  hut.add(walls);
-
-  // Conical thatched roof.
-  const roofGeo = new THREE.ConeGeometry(HUT_ROOF_RADIUS, HUT_ROOF_HEIGHT, 8);
-  const roofMat = new THREE.MeshStandardMaterial({
-    color: palette.hutRoof,
-    roughness: 1.0,
-    flatShading: true,
-  });
-  const roof = new THREE.Mesh(roofGeo, roofMat);
-  roof.position.y = HUT_WALL_HEIGHT + HUT_ROOF_HEIGHT / 2;
-  roof.castShadow = true;
-  roof.name = 'Roof';
-  hut.add(roof);
-
-  // Doorway: dark slab in front
-  const doorGeo = new THREE.PlaneGeometry(0.85, 1.3);
-  const doorMat = new THREE.MeshBasicMaterial({ color: 0x1a1208, side: THREE.DoubleSide });
-  const door = new THREE.Mesh(doorGeo, doorMat);
-  door.position.set(0, 0.65, HUT_WALL_RADIUS + 0.01);
-  door.name = 'Door';
-  hut.add(door);
-
-  // Random chimney smoke puff (a simple light sphere) ~30% of huts
-  if (rng() < 0.3) {
-    const puffGeo = new THREE.SphereGeometry(0.32, 8, 6);
-    const puffMat = new THREE.MeshBasicMaterial({ color: 0xd8d8d8, transparent: true, opacity: 0.6 });
-    const puff = new THREE.Mesh(puffGeo, puffMat);
-    puff.position.set(0.5, HUT_WALL_HEIGHT + HUT_ROOF_HEIGHT + 0.4, 0.0);
-    puff.name = 'Smoke';
-    hut.add(puff);
+  for (let i = 0; i < p.villageCount; i++) {
+    const angle = 0.55 + (i / Math.max(1, p.villageCount)) * Math.PI * 2 + (rng() - 0.5) * 0.28;
+    const radius = Math.max(p.innerRadius + 14, p.outerRadius - 6 + rng() * 3);
+    const x = Math.cos(angle) * radius;
+    const z = Math.sin(angle) * radius;
+    const village = createVillageCluster({
+      seed: p.seed + 101 + i * 37,
+      fortified: i % 2 === 1,
+      scale: 0.64 + rng() * 0.08,
+      palette: structurePalette,
+    }) as THREE.Group;
+    village.position.set(x, height(x, z), z);
+    village.rotation.y = -angle + Math.PI * 0.5;
+    group.add(village);
   }
 
-  // Record collider derived from the wall primitive (scaled by the hut's
-  // scale at placement time). Consumed by getColliders() below.
-  hut.userData.collider = {
-    type: 'cylinder' as const,
-    radius: HUT_WALL_BOTTOM_RADIUS,
-    height: HUT_WALL_HEIGHT,
+  group.updateMatrixWorld(true);
+  const pos = new THREE.Vector3();
+  const scl = new THREE.Vector3();
+  const quat = new THREE.Quaternion();
+  const rot = new THREE.Euler();
+  group.traverse(obj => {
+    const c = obj.userData.collider as
+      | { type: 'cylinder'; radius: number; height: number }
+      | { type: 'box'; width: number; depth: number; height: number }
+      | undefined;
+    if (!c) return;
+    obj.getWorldPosition(pos);
+    obj.getWorldScale(scl);
+    if (c.type === 'cylinder') {
+      colliders.push({
+        type: 'cylinder',
+        x: pos.x,
+        z: pos.z,
+        radius: c.radius * Math.max(scl.x, scl.z),
+        height: c.height * scl.y,
+      });
+    } else {
+      obj.getWorldQuaternion(quat);
+      rot.setFromQuaternion(quat, 'YXZ');
+      colliders.push({
+        type: 'box',
+        x: pos.x,
+        z: pos.z,
+        width: c.width * scl.x,
+        depth: c.depth * scl.z,
+        height: c.height * scl.y,
+        rotation: rot.y,
+      });
+    }
+  });
+  group.userData.colliders = colliders;
+  return group;
+}
+
+function toStructurePalette(p: Palette) {
+  return {
+    plaster: p.hutWall,
+    plasterLight: new THREE.Color(p.hutWall).lerp(new THREE.Color(0xffffff), 0.18).getHex(),
+    thatch: p.hutRoof,
+    thatchLight: new THREE.Color(p.hutRoof).lerp(new THREE.Color(0xd89b4b), 0.3).getHex(),
+    stone: p.rock,
+    stoneDark: new THREE.Color(p.rock).multiplyScalar(0.68).getHex(),
   };
-  return hut;
 }
 
 function disposeDeep(obj: THREE.Object3D): void {
