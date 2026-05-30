@@ -11,6 +11,17 @@ import { Holdable, HoldableProvider } from './holdable';
 import type { PreyRef, PreyProvider, PreyState } from './prey';
 import { combatContactRange, emitDamageSplat, emitHealSplat, healPreyState, maintainCombatSpacing, makePreyState } from './prey';
 import { resolveAnimalPhysics } from './animal-physics';
+import {
+  ATTACK_DURATION,
+  FLINCH_DURATION,
+  actionPulse,
+  makeAnimalActionState,
+  makeFurTexture,
+  tickAnimalActions,
+  triggerAttack,
+  triggerFlinch,
+  type AnimalActionState,
+} from './procedural-animal-visuals';
 
 const WALK_SPEED = 1.6;
 const TURN_RATE = 2.4;          // radians/sec toward target heading
@@ -46,15 +57,18 @@ interface Dog {
   heightData: Uint8Array | null;
   held: boolean;
   prey: PreyState;
+  actions: AnimalActionState;
   id: string;
   name: string;
 }
 
 function buildDogMesh(): DogParts {
   const palette = PALETTE[Math.floor(Math.random() * PALETTE.length)];
-  const bodyMat = new THREE.MeshStandardMaterial({ color: palette.body, roughness: 0.85, metalness: 0.0 });
+  const fur = makeFurTexture(palette.body, palette.belly, 'mottle');
+  const bodyMat = new THREE.MeshStandardMaterial({ map: fur, roughness: 0.85, metalness: 0.0 });
   const bellyMat = new THREE.MeshStandardMaterial({ color: palette.belly, roughness: 0.85, metalness: 0.0 });
   const noseMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.6 });
+  const collarMat = new THREE.MeshStandardMaterial({ color: 0x8f3428, roughness: 0.72 });
 
   const group = new THREE.Group();
   group.name = 'Dog';
@@ -82,6 +96,9 @@ function buildDogMesh(): DogParts {
   neck.position.set(0, -0.05, 0.05);
   neck.castShadow = true;
   headPivot.add(neck);
+  const collar = new THREE.Mesh(new THREE.BoxGeometry(0.37, 0.08, 0.34), collarMat);
+  collar.position.set(0, -0.05, 0.05);
+  headPivot.add(collar);
 
   const headGeo = new THREE.BoxGeometry(0.36, 0.34, 0.42);
   const head = new THREE.Mesh(headGeo, bodyMat);
@@ -196,6 +213,7 @@ export class DogPack implements HoldableProvider, PreyProvider {
       heightData: this.heightData,
       held: false,
       prey: makePreyState(55),
+      actions: makeAnimalActionState(),
       id: `dog-${this.dogs.length + 1}`,
       name: 'Dog',
     };
@@ -262,6 +280,7 @@ export class DogPack implements HoldableProvider, PreyProvider {
         if (dog.prey.dead) return false;
         dog.prey.hp -= amount;
         dog.prey.lastHitAt = performance.now();
+        triggerFlinch(dog.actions);
         emitDamageSplat(dog.parts.group, amount);
         if (attacker?.alive) dog.prey.combatTarget = attacker;
         if (dog.prey.hp <= 0) {
@@ -318,13 +337,21 @@ export class DogPack implements HoldableProvider, PreyProvider {
         dog.parts.body.position.y = 0.55;
         dog.parts.head.rotation.x = 0;
         dog.parts.tail.rotation.y = 0;
+        dog.actions = makeAnimalActionState();
       }
     };
   }
 
   private updateDog(dog: Dog, delta: number): void {
+    tickAnimalActions(dog.actions, delta);
     this.updateCombat(dog, delta);
     const moving = dog.pauseTimer <= 0;
+    dog.parts.group.rotation.z = 0;
+    dog.parts.body.position.y = 0.55;
+    dog.parts.body.rotation.set(0, 0, 0);
+    dog.parts.head.position.set(0, 0.7, 0.5);
+    dog.parts.head.rotation.x = 0;
+    dog.parts.head.rotation.z = 0;
 
     if (!moving) {
       dog.pauseTimer -= delta;
@@ -332,6 +359,7 @@ export class DogPack implements HoldableProvider, PreyProvider {
       dog.parts.tail.rotation.y = Math.sin(performance.now() * 0.008) * 0.6;
       // Settle legs
       for (const leg of dog.parts.legs) leg.mesh.rotation.x *= 0.9;
+      this.applyActionPose(dog);
       this.applyTerrain(dog);
       return;
     }
@@ -388,7 +416,17 @@ export class DogPack implements HoldableProvider, PreyProvider {
     // Head bob slightly
     dog.parts.head.rotation.x = Math.sin(dog.walkPhase) * 0.08;
 
+    this.applyActionPose(dog);
     this.applyTerrain(dog);
+  }
+
+  private applyActionPose(dog: Dog): void {
+    const flinch = actionPulse(dog.actions.flinchTimer, FLINCH_DURATION);
+    const attack = actionPulse(dog.actions.attackTimer, ATTACK_DURATION);
+    dog.parts.group.rotation.z = flinch * 0.2;
+    dog.parts.body.rotation.x = -attack * 0.14;
+    dog.parts.head.rotation.x -= attack * 0.38;
+    dog.parts.head.position.z += attack * 0.16;
   }
 
   private applyTerrain(dog: Dog): void {
@@ -424,7 +462,9 @@ export class DogPack implements HoldableProvider, PreyProvider {
     }
     maintainCombatSpacing(dog.pos, target, attackRange);
     dog.yaw = Math.atan2(dx, dz);
+    dog.pauseTimer = Math.max(dog.pauseTimer, 0.14);
     if (dog.prey.attackTimer <= 0) {
+      triggerAttack(dog.actions);
       target.damage(6, this.makePreyRef(dog));
       dog.prey.attackTimer = 1.6;
     }

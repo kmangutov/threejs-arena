@@ -12,6 +12,8 @@ import { join } from 'path';
 import { deflateSync } from 'zlib';
 import * as THREE from 'three';
 import {
+  PROCEDURAL_ASSETS,
+  createProceduralAsset,
   createStructureGallery,
   createVillageCluster,
 } from '../src/procedural-structures.js';
@@ -30,10 +32,10 @@ const gutter = 20;
 mkdirSync(outDir, { recursive: true });
 
 const angles = [
-  { name: 'three-quarter', position: [26, 20, 31], target: [0, 2.1, 1] },
-  { name: 'front', position: [0, 15, 40], target: [0, 2.2, 0] },
-  { name: 'side', position: [39, 15, 2], target: [0, 2.2, 0] },
-  { name: 'aerial', position: [22, 42, 25], target: [0, 0.5, 0] },
+  { name: 'three-quarter', direction: [0.72, 0.5, 1] },
+  { name: 'front', direction: [0, 0.38, 1] },
+  { name: 'side', direction: [1, 0.38, 0.05] },
+  { name: 'aerial', direction: [0.58, 1, 0.64] },
 ];
 
 async function renderSet(name, createSubject) {
@@ -67,20 +69,27 @@ async function renderSet(name, createSubject) {
 function renderAngle(createSubject, angle) {
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(42, width / height, 0.1, 300);
-  camera.position.set(...angle.position);
-  camera.lookAt(new THREE.Vector3(...angle.target));
+  const subject = createSubject();
+  scene.add(subject);
+  scene.updateMatrixWorld(true);
+  const bounds = new THREE.Box3().setFromObject(subject);
+  const target = bounds.getCenter(new THREE.Vector3());
+  const dimensions = bounds.getSize(new THREE.Vector3());
+  const radius = Math.max(dimensions.length() * 0.54, 1.8);
+  const direction = new THREE.Vector3(...angle.direction).normalize();
+  camera.position.copy(target).addScaledVector(direction, Math.max(radius * 2.75, 7));
+  camera.lookAt(target);
   camera.updateProjectionMatrix();
   camera.updateMatrixWorld(true);
 
   const ground = new THREE.Mesh(
-    new THREE.CircleGeometry(29, 48),
+    new THREE.CircleGeometry(Math.max(6, radius * 1.65), 48),
     new THREE.MeshLambertMaterial({ color: 0x769149 }),
   );
   ground.name = 'Ground';
   ground.rotation.x = -Math.PI / 2;
   ground.position.y = -0.04;
   scene.add(ground);
-  scene.add(createSubject());
   scene.updateMatrixWorld(true);
 
   const rgba = solidImage(width, height, [159, 199, 208, 255]);
@@ -254,10 +263,16 @@ function crc32(buffer) {
 }
 
 const written = [];
-written.push(...await renderSet('structures', () => createStructureGallery()));
-written.push(...await renderSet('village', () => createVillageCluster({
-  seed: 73,
-  fortified: true,
-  scale: 1.18,
-})));
+if (args.asset) {
+  const asset = PROCEDURAL_ASSETS.find(item => item.id === args.asset);
+  if (!asset) throw new Error(`Unknown --asset=${args.asset}`);
+  written.push(...await renderSet(`asset-${args.asset}`, () => createProceduralAsset(args.asset, { seed: 73 })));
+} else {
+  written.push(...await renderSet('structures', () => createStructureGallery()));
+  written.push(...await renderSet('village', () => createVillageCluster({
+    seed: 73,
+    fortified: true,
+    scale: 1.18,
+  })));
+}
 console.log(JSON.stringify({ ok: true, written }, null, 2));

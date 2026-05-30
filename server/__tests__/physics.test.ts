@@ -290,7 +290,8 @@ describe('ability positions', () => {
     });
 
     it('clamps to arena bounds', () => {
-      const pos = vec3(15, 0, 0);
+      // Start near the world edge so the blink overshoots and clamps.
+      const pos = vec3(ARENA_BOUND - 5, 0, 0);
       const dest = getBlinkDestination(pos, -Math.PI / 2, 20);
 
       expect(dest.x).toBe(ARENA_BOUND);

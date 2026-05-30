@@ -16,7 +16,7 @@ import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { GrassField } from './grass';
 import type { Collider } from './arena';
 // @ts-ignore - shared JS builders are also consumed directly by the Node PNG renderer.
-import { createRoundHut, createVillageCluster } from './procedural-structures.js';
+import { collectStructureColliders, createRoundHut, createVillageCluster } from './procedural-structures.js';
 
 export type Biome = 'grassland' | 'autumn' | 'tundra' | 'arid';
 
@@ -166,8 +166,8 @@ export class Ecosystem extends THREE.Group {
       // Grass grows into the arena while larger props stay outside the
       // combat ring. This matches WoW's dense ground cover without clutter.
       innerRadius: Math.min(this.params.innerRadius, 2.5),
-      // Grass spreads into a broad meadow well past the prop radius so the
-      // ground cover doesn't end in an obvious disc near the player.
+      // Broad meadow well past the prop radius so ground cover doesn't end in
+      // an obvious disc near the player.
       outerRadius: Math.max(this.params.outerRadius, 96),
       baseColor: palette.grass[0],
       tipColor: palette.grass[1],
@@ -624,41 +624,7 @@ function buildVillages(
     group.add(village);
   }
 
-  group.updateMatrixWorld(true);
-  const pos = new THREE.Vector3();
-  const scl = new THREE.Vector3();
-  const quat = new THREE.Quaternion();
-  const rot = new THREE.Euler();
-  group.traverse(obj => {
-    const c = obj.userData.collider as
-      | { type: 'cylinder'; radius: number; height: number }
-      | { type: 'box'; width: number; depth: number; height: number }
-      | undefined;
-    if (!c) return;
-    obj.getWorldPosition(pos);
-    obj.getWorldScale(scl);
-    if (c.type === 'cylinder') {
-      colliders.push({
-        type: 'cylinder',
-        x: pos.x,
-        z: pos.z,
-        radius: c.radius * Math.max(scl.x, scl.z),
-        height: c.height * scl.y,
-      });
-    } else {
-      obj.getWorldQuaternion(quat);
-      rot.setFromQuaternion(quat, 'YXZ');
-      colliders.push({
-        type: 'box',
-        x: pos.x,
-        z: pos.z,
-        width: c.width * scl.x,
-        depth: c.depth * scl.z,
-        height: c.height * scl.y,
-        rotation: rot.y,
-      });
-    }
-  });
+  colliders.push(...collectStructureColliders(group) as Collider[]);
   group.userData.colliders = colliders;
   return group;
 }

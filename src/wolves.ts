@@ -16,6 +16,17 @@ import { getTerrainHeight } from './terrain';
 import type { Collider } from './arena';
 import { combatContactRange, emitDamageSplat, emitHealSplat, maintainCombatSpacing, type CombatTargetRef, type PreyRef, type PreyProvider } from './prey';
 import { resolveAnimalPhysics } from './animal-physics';
+import {
+  ATTACK_DURATION,
+  FLINCH_DURATION,
+  actionPulse,
+  makeAnimalActionState,
+  makeFurTexture,
+  tickAnimalActions,
+  triggerAttack,
+  triggerFlinch,
+  type AnimalActionState,
+} from './procedural-animal-visuals';
 
 const WALK_SPEED = 1.8;
 const HUNT_SPEED = 4.0;
@@ -61,6 +72,7 @@ interface Wolf {
   dead: boolean;
   deadTimer: number;
   lastHitAt: number;
+  actions: AnimalActionState;
   id: string;
   name: string;
   aggro: Map<string, { ref: CombatTargetRef; score: number }>;
@@ -69,7 +81,8 @@ interface Wolf {
 
 function buildWolfMesh(): WolfParts {
   const palette = WOLF_PALETTE[Math.floor(Math.random() * WOLF_PALETTE.length)];
-  const bodyMat = new THREE.MeshStandardMaterial({ color: palette.body, roughness: 0.85, flatShading: true });
+  const fur = makeFurTexture(palette.body, palette.belly, 'mottle');
+  const bodyMat = new THREE.MeshStandardMaterial({ map: fur, roughness: 0.85, flatShading: true });
   const bellyMat = new THREE.MeshStandardMaterial({ color: palette.belly, roughness: 0.85, flatShading: true });
   const earMat = new THREE.MeshStandardMaterial({ color: palette.ears, roughness: 0.9, flatShading: true });
   const eyeMat = new THREE.MeshBasicMaterial({ color: 0xe8c63a });
@@ -299,6 +312,7 @@ export class WolfPack implements PreyProvider {
       dead: false,
       deadTimer: 0,
       lastHitAt: 0,
+      actions: makeAnimalActionState(),
       id: `wolf-${this.wolves.length + 1}`,
       name: 'Wolf',
       aggro: new Map(),
@@ -328,6 +342,7 @@ export class WolfPack implements PreyProvider {
           wolf.hp = wolf.maxHp;
           wolf.aggro.clear();
           wolf.parts.group.rotation.x = 0;
+          wolf.actions = makeAnimalActionState();
           wolf.pos.copy(this.denPos).add(new THREE.Vector3((Math.random() - 0.5) * 3, 0, (Math.random() - 0.5) * 3));
           wolf.prowlCenter.copy(wolf.pos);
           wolf.target.copy(this.pickWanderTarget(wolf));
@@ -400,6 +415,7 @@ export class WolfPack implements PreyProvider {
         if (wolf.dead) return false;
         wolf.hp -= amount;
         wolf.lastHitAt = performance.now();
+        triggerFlinch(wolf.actions);
         emitDamageSplat(wolf.parts.group, amount);
         if (attacker?.alive) {
           this.addAggro(wolf, attacker, amount + 40);
@@ -455,8 +471,14 @@ export class WolfPack implements PreyProvider {
 
   private updateWolf(wolf: Wolf, delta: number): void {
     // Cooldown decay
+    tickAnimalActions(wolf.actions, delta);
     if (wolf.attackTimer > 0) wolf.attackTimer = Math.max(0, wolf.attackTimer - delta);
     wolf.stateTimer += delta;
+    wolf.parts.group.rotation.z = 0;
+    wolf.parts.body.position.y = 0.62;
+    wolf.parts.body.rotation.set(0, 0, 0);
+    wolf.parts.head.position.set(0, 0.7, 0.6);
+    wolf.parts.head.rotation.set(0.05, 0, 0);
 
     // ----- prey acquisition / loss -----
     const aggroTarget = this.chooseAggroTarget(wolf);
@@ -533,6 +555,7 @@ export class WolfPack implements PreyProvider {
           const killed = wolf.prey.damage(ATTACK_DAMAGE, wolfRef);
           this.addAggro(wolf, wolf.prey, ATTACK_DAMAGE);
           wolf.attackTimer = ATTACK_COOLDOWN;
+          triggerAttack(wolf.actions);
           // Jaw snap visual
           wolf.parts.jaw.rotation.x = -0.6;
           if (killed) {
@@ -598,6 +621,11 @@ export class WolfPack implements PreyProvider {
 
     // Jaw recovery between bites.
     wolf.parts.jaw.rotation.x = Math.min(0, wolf.parts.jaw.rotation.x + delta * 3);
+    if (wolf.state === 'feed') {
+      wolf.parts.head.rotation.x = 0.42 + Math.sin(wolf.stateTimer * 7) * 0.1;
+      wolf.parts.jaw.rotation.x = -0.14 - Math.max(0, Math.sin(wolf.stateTimer * 10)) * 0.16;
+    }
+    this.applyActionPose(wolf);
 
     // Drop to terrain & rotate.
     const y = resolveAnimalPhysics(wolf.pos, {
@@ -615,5 +643,14 @@ export class WolfPack implements PreyProvider {
       const passive = this.findNearestHuntTarget(wolf.pos, SCARE_RADIUS);
       if (passive) passive.scare(wolf.pos.x, wolf.pos.z, 800);
     }
+  }
+
+  private applyActionPose(wolf: Wolf): void {
+    const flinch = actionPulse(wolf.actions.flinchTimer, FLINCH_DURATION);
+    const attack = actionPulse(wolf.actions.attackTimer, ATTACK_DURATION);
+    wolf.parts.group.rotation.z = flinch * 0.22;
+    wolf.parts.body.rotation.x = -attack * 0.14;
+    wolf.parts.head.rotation.x -= attack * 0.24;
+    wolf.parts.head.position.z += attack * 0.18;
   }
 }

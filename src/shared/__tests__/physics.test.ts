@@ -66,7 +66,8 @@ describe('physics constants', () => {
     });
 
     it('arena bound allows movement', () => {
-      expect(ARENA_BOUND).toBe(18);
+      // Open world: the bound just keeps the player on the terrain mesh.
+      expect(ARENA_BOUND).toBe(150);
       expect(ARENA_BOUND).toBeGreaterThan(0);
     });
   });
