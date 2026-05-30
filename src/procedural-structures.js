@@ -417,6 +417,10 @@ export function createRoundHut({ seed = 1, scale = 1, palette: colors = {} } = {
   const plaster = mat(p.plaster);
   const wood = mat(p.timberDark);
   const thatch = mat(p.thatch);
+  addMesh(group, new THREE.CylinderGeometry(1.88, 2.0, 0.38, 9), mat(p.stoneDark), {
+    name: 'HutFoundation',
+    position: [0, 0.19, 0],
+  });
   addMesh(group, new THREE.CylinderGeometry(1.65, 1.85, 2.35, 9), plaster, {
     name: 'HutWalls',
     position: [0, 1.175, 0],
@@ -440,6 +444,13 @@ export function createRoundHut({ seed = 1, scale = 1, palette: colors = {} } = {
     name: 'Door',
     position: [0, 0.79, 1.855],
   });
+  addDoorBraces(group, mat(p.timber), 0, 0.82, 1.92, 0.9, 1.42);
+  addMesh(group, new THREE.TorusGeometry(1.74, 0.075, 5, 9), wood, {
+    name: 'HutWallBand',
+    position: [0, 1.78, 0],
+    rotation: [Math.PI / 2, 0, 0],
+  });
+  addWindow(group, p, 1.76, 1.34, 0, Math.PI / 2, 0.42, 0.68);
   addBeam(group, wood, -0.57, 0.86, 1.92, 0.13, 1.72, 0.14);
   addBeam(group, wood, 0.57, 0.86, 1.92, 0.13, 1.72, 0.14);
   addBeam(group, wood, 0, 1.64, 1.91, 1.2, 0.16, 0.14);
@@ -599,6 +610,160 @@ export function createTimberHouse({ seed = 1, scale = 1, palette: colors = {} } 
   return group;
 }
 
+export function createAnvil({ scale = 1, palette: colors = {} } = {}) {
+  const p = palette(colors);
+  const group = new THREE.Group();
+  group.name = 'Anvil';
+  const iron = mat(p.iron);
+  const wood = mat(p.timberDark);
+  addMesh(group, new THREE.CylinderGeometry(0.32, 0.45, 0.72, 7), wood, {
+    name: 'AnvilStump',
+    position: [0, 0.36, 0],
+  });
+  addMesh(group, new THREE.BoxGeometry(0.96, 0.22, 0.42), iron, {
+    name: 'AnvilBody',
+    position: [-0.08, 0.86, 0],
+  });
+  addMesh(group, new THREE.BoxGeometry(1.16, 0.14, 0.56), iron, {
+    name: 'AnvilFace',
+    position: [-0.02, 1.04, 0],
+  });
+  addMesh(group, new THREE.ConeGeometry(0.28, 0.82, 5), iron, {
+    name: 'AnvilHorn',
+    position: [0.72, 0.89, 0],
+    rotation: [0, 0, -Math.PI / 2],
+  });
+  group.scale.setScalar(scale);
+  return group;
+}
+
+export function createHandcart({ scale = 1, palette: colors = {} } = {}) {
+  const p = palette(colors);
+  const group = new THREE.Group();
+  group.name = 'Handcart';
+  const wood = mat(p.timber);
+  const dark = mat(p.timberDark);
+  const iron = mat(p.iron);
+  addMesh(group, new THREE.BoxGeometry(1.72, 0.24, 2.0), wood, {
+    name: 'CartBed',
+    position: [0, 0.92, 0],
+  });
+  for (const x of [-0.82, 0.82]) {
+    addMesh(group, new THREE.BoxGeometry(0.14, 0.78, 2.04), dark, {
+      name: 'CartSide',
+      position: [x, 1.27, 0],
+    });
+    for (const z of [-0.72, 0, 0.72]) {
+      addMesh(group, new THREE.CylinderGeometry(0.055, 0.07, 0.72, 6), dark, {
+        name: 'CartSlat',
+        position: [x, 1.25, z],
+      });
+    }
+  }
+  for (const x of [-1.0, 1.0]) {
+    addMesh(group, new THREE.TorusGeometry(0.68, 0.12, 5, 10), iron, {
+      name: 'CartWheel',
+      position: [x, 0.68, 0],
+      rotation: [0, Math.PI / 2, 0],
+    });
+    for (let i = 0; i < 6; i++) {
+      addMesh(group, new THREE.BoxGeometry(0.08, 1.12, 0.08), dark, {
+        name: 'CartSpoke',
+        position: [x, 0.68, 0],
+        rotation: [i * Math.PI / 6, 0, 0],
+      });
+    }
+  }
+  for (const x of [-0.58, 0.58]) {
+    addMesh(group, new THREE.BoxGeometry(0.13, 0.13, 2.3), dark, {
+      name: 'CartHandle',
+      position: [x, 0.86, 2.04],
+      rotation: [-0.08, 0, 0],
+    });
+  }
+  place(group, createCrate({ scale: 0.72, palette: p }), -0.35, -0.12, 1.05, 0.08);
+  group.scale.setScalar(scale);
+  return group;
+}
+
+export function createBlacksmith({ seed = 1, scale = 1, palette: colors = {} } = {}) {
+  const p = palette(colors);
+  const rng = makeRng(seed);
+  const group = new THREE.Group();
+  group.name = 'BlacksmithWorkshop';
+  const plaster = mat(p.plaster);
+  const wood = mat(p.timberDark);
+  const stone = mat(p.stoneDark);
+  const roof = mat(p.thatch);
+
+  addMesh(group, new THREE.BoxGeometry(5.8, 0.46, 4.2), stone, {
+    name: 'SmithyFoundation',
+    position: [0, 0.23, 0],
+  });
+  addMesh(group, new THREE.BoxGeometry(4.9, 2.85, 3.7), plaster, {
+    name: 'SmithyWalls',
+    position: [-0.35, 1.68, 0],
+  });
+  addMesh(group, new THREE.BoxGeometry(5.6, 0.22, 2.85), roof, {
+    name: 'SmithyRoof',
+    position: [-0.35, 3.66, 0.92],
+    rotation: [0.62, 0, 0],
+  });
+  addMesh(group, new THREE.BoxGeometry(5.6, 0.22, 2.85), roof, {
+    name: 'SmithyRoof',
+    position: [-0.35, 3.66, -0.92],
+    rotation: [-0.62, 0, 0],
+  });
+  addBeam(group, wood, -0.35, 4.5, 0, 5.85, 0.17, 0.17);
+  for (const x of [-2.68, -1.18, 0.3, 1.82]) {
+    addBeam(group, wood, x, 1.66, 1.92, 0.15, 3.1, 0.15);
+    addBeam(group, wood, x, 1.66, -1.92, 0.15, 3.1, 0.15);
+  }
+  addBeam(group, wood, -0.35, 1.72, 1.94, 5.2, 0.17, 0.15);
+  addMesh(group, new THREE.BoxGeometry(1.12, 1.92, 0.1), mat(p.timber), {
+    name: 'SmithyDoor',
+    position: [-0.5, 1.0, 1.96],
+  });
+  addDoorBraces(group, wood, -0.5, 1.0, 2.03, 1.0, 1.78);
+  addWindow(group, p, 1.1, 1.64, 2.02, 0, 0.7, 0.74);
+
+  addMesh(group, new THREE.CylinderGeometry(0.48, 0.62, 3.25, 7), stone, {
+    name: 'ForgeChimney',
+    position: [-1.86, 3.62, -0.5],
+  });
+  addMesh(group, new THREE.CylinderGeometry(0.7, 0.74, 0.24, 7), mat(p.stone), {
+    name: 'ChimneyCap',
+    position: [-1.86, 5.27, -0.5],
+  });
+
+  addMesh(group, new THREE.BoxGeometry(2.7, 0.16, 3.35), roof, {
+    name: 'ForgeLeanTo',
+    position: [3.28, 2.56, 0],
+    rotation: [0, 0, -0.13],
+  });
+  for (const z of [-1.38, 1.38]) {
+    addMesh(group, new THREE.CylinderGeometry(0.08, 0.12, 2.55, 6), wood, {
+      name: 'LeanToPost',
+      position: [4.46, 1.28, z],
+    });
+  }
+  addMesh(group, new THREE.BoxGeometry(1.65, 0.72, 1.2), stone, {
+    name: 'ForgeHearth',
+    position: [3.25, 0.58, -0.28],
+  });
+  addMesh(group, new THREE.BoxGeometry(1.06, 0.1, 0.62), glowMat(p.ember), {
+    name: 'ForgeEmbers',
+    position: [3.25, 0.98, -0.28],
+  });
+  place(group, createAnvil({ scale: 0.78, palette: p }), 3.4, 1.05, 0, -0.18);
+  if (rng() < 0.75) {
+    place(group, createBarrel({ scale: 0.68, palette: p }), 4.34, -1.0, 0, 0.12);
+  }
+  group.userData.collider = { type: 'box', width: 5.8, depth: 4.2, height: 3.1 };
+  group.scale.setScalar(scale);
+  return group;
+}
+
 export function createMarketStall({ color, scale = 1, palette: colors = {} } = {}) {
   const p = palette(colors);
   const group = new THREE.Group();
@@ -685,6 +850,14 @@ export function createVillageGate({ scale = 1, palette: colors = {} } = {}) {
   }
   addBeam(group, wood, 0, 4.02, 0, 5.0, 0.38, 0.42);
   addBeam(group, wood, 0, 3.42, 0, 4.7, 0.18, 0.18, 0.0);
+  addBeam(group, wood, -1.06, 3.98, 0, 2.25, 0.17, 0.17, 0.68);
+  addBeam(group, wood, 1.06, 3.98, 0, 2.25, 0.17, 0.17, -0.68);
+  for (const x of [-1.35, -0.68, 0, 0.68, 1.35]) {
+    addMesh(group, new THREE.ConeGeometry(0.12, 0.48, 5), wood, {
+      name: 'GateSpike',
+      position: [x, 4.58, 0],
+    });
+  }
   place(group, createBanner({ color: p.clothRed, scale: 0.62, palette: p }), -2.15, 0.05, 2.9);
   place(group, createBanner({ color: p.clothBlue, scale: 0.62, palette: p }), 2.15, 0.05, 2.9);
   group.scale.setScalar(scale);
@@ -760,20 +933,22 @@ export function createVillageCluster({ seed = 1, fortified = false, scale = 1, p
   place(group, createRoundHut({ seed: seed + 17, scale: 0.72, palette: p }), 4.4, -3.5, 0, -0.58);
   place(group, createLonghouse({ seed: seed + 23, scale: 0.72, palette: p }), -1.2, 5.0, 0, Math.PI);
   place(group, createTimberHouse({ seed: seed + 29, scale: 0.58, palette: p }), -7.0, 3.8, 0, 0.28);
+  place(group, createBlacksmith({ seed: seed + 31, scale: 0.55, palette: p }), 7.2, 4.9, 0, -0.72);
   place(group, createMarketStall({ color: rng() < 0.5 ? p.clothRed : p.clothBlue, scale: 0.72, palette: p }), 4.3, 2.1, 0, -0.4);
   place(group, createBench({ scale: 0.72, palette: p }), 1.25, 1.55, 0, -0.52);
   place(group, createCampfire({ scale: 0.72, palette: p }), -1.2, -2.0);
-  place(group, createRockFormation({ seed: seed + 31, count: 4, scale: 0.7, palette: p }), -7.0, -0.3);
+  place(group, createRockFormation({ seed: seed + 37, count: 4, scale: 0.7, palette: p }), -7.0, -0.3);
   place(group, createFenceSegment({ length: 5, scale: 0.85, palette: p }), -5.0, 1.0, 0, Math.PI / 2);
   place(group, createFenceSegment({ length: 5, scale: 0.85, palette: p }), 1.4, -5.5, 0, 0.1);
   place(group, createSignpost({ scale: 0.76, palette: p }), 1.7, -3.1, 0, 0.45);
   place(group, createCrate({ scale: 0.72, palette: p }), 2.45, 2.3, 0, -0.12);
   place(group, createCrate({ scale: 0.56, palette: p }), 3.0, 2.65, 0, 0.18);
   place(group, createBarrel({ scale: 0.7, palette: p }), -3.2, 4.5, 0, 0.1);
+  place(group, createHandcart({ scale: 0.58, palette: p }), 3.2, -4.5, 0, -0.35);
   place(group, createBanner({ color: p.clothRed, scale: 0.66, palette: p }), -4.9, -0.35);
   if (fortified) {
     place(group, createVillageGate({ scale: 0.72, palette: p }), 0.2, -7.0, 0, 0);
-    place(group, createWatchtower({ scale: 0.66, palette: p }), 7.2, 5.3, 0, -0.35);
+    place(group, createWatchtower({ scale: 0.66, palette: p }), 10.0, 7.2, 0, -0.35);
     place(group, createFenceSegment({ length: 4.5, scale: 0.8, palette: p }), 5.4, -4.4, 0, -0.75);
   }
   group.scale.setScalar(scale);
@@ -787,14 +962,16 @@ export function createStructureGallery({ palette: colors = {} } = {}) {
   place(group, createRoundHut({ seed: 11, scale: 0.9, palette: p }), -13.0, -4.0);
   place(group, createLonghouse({ seed: 21, scale: 0.85, palette: p }), -7.2, -4.0, 0, -0.12);
   place(group, createTimberHouse({ seed: 32, scale: 0.78, palette: p }), -0.6, -4.0);
-  place(group, createMarketStall({ scale: 0.9, palette: p }), 5.0, -4.0);
-  place(group, createWell({ scale: 0.82, palette: p }), 9.4, -4.0);
-  place(group, createWatchtower({ scale: 0.82, palette: p }), 13.0, -4.0);
+  place(group, createBlacksmith({ seed: 43, scale: 0.72, palette: p }), 5.3, -4.0);
+  place(group, createMarketStall({ scale: 0.9, palette: p }), 11.0, -4.0);
+  place(group, createWell({ scale: 0.82, palette: p }), 15.4, -4.0);
+  place(group, createWatchtower({ scale: 0.82, palette: p }), 19.0, -4.0);
   place(group, createVillageGate({ scale: 0.88, palette: p }), -11.5, 5.7);
   place(group, createCastleKeep({ scale: 0.63, palette: p }), -3.6, 6.4);
   place(group, createRockFormation({ seed: 44, count: 6, scale: 0.92, palette: p }), 5.0, 5.4);
   place(group, createCampfire({ scale: 0.8, palette: p }), 8.5, 5.2);
   place(group, createBench({ scale: 0.82, palette: p }), 10.7, 5.0, 0, -0.12);
+  place(group, createHandcart({ scale: 0.68, palette: p }), 12.6, 4.3, 0, 0.18);
   place(group, createCrate({ scale: 0.9, palette: p }), 12.4, 5.0);
   place(group, createBarrel({ scale: 0.86, palette: p }), 13.8, 5.1);
   place(group, createSignpost({ scale: 0.96, palette: p }), 15.2, 3.6, 0, 0.2);
@@ -804,6 +981,7 @@ export function createStructureGallery({ palette: colors = {} } = {}) {
 export const PROCEDURAL_ASSETS = [
   { id: 'castle-keep', label: 'Castle Keep', category: 'Landmarks', create: createCastleKeep },
   { id: 'timber-house', label: 'Timber House', category: 'Buildings', create: createTimberHouse },
+  { id: 'blacksmith', label: 'Blacksmith Workshop', category: 'Buildings', create: createBlacksmith },
   { id: 'longhouse', label: 'Longhouse', category: 'Buildings', create: createLonghouse },
   { id: 'round-hut', label: 'Round Hut', category: 'Buildings', create: createRoundHut },
   { id: 'watchtower', label: 'Watchtower', category: 'Fortifications', create: createWatchtower },
@@ -811,6 +989,8 @@ export const PROCEDURAL_ASSETS = [
   { id: 'market-stall', label: 'Market Stall', category: 'Village Props', create: createMarketStall },
   { id: 'well', label: 'Roofed Well', category: 'Village Props', create: createWell },
   { id: 'bench', label: 'Bench', category: 'Village Props', create: createBench },
+  { id: 'handcart', label: 'Handcart', category: 'Village Props', create: createHandcart },
+  { id: 'anvil', label: 'Anvil', category: 'Village Props', create: createAnvil },
   { id: 'signpost', label: 'Signpost', category: 'Village Props', create: createSignpost },
   { id: 'banner', label: 'Banner', category: 'Village Props', create: createBanner },
   { id: 'fence-segment', label: 'Fence Segment', category: 'Village Props', create: createFenceSegment },
