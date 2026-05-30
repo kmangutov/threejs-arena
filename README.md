@@ -14,10 +14,25 @@ npm run dev
 Useful URLs:
 
 ```text
-http://localhost:5173/?mode=standalone
-http://localhost:5173/?mode=standalone&mixamo=1
-http://localhost:5173/?mode=standalone&mixamo=1&char=mutant
-http://localhost:5173/?mode=multiplayer&server=ws://localhost:8080
+http://localhost:3000/threejs-arena/?mode=standalone
+http://localhost:3000/threejs-arena/?mode=standalone&mixamo=1
+http://localhost:3000/threejs-arena/?mode=standalone&mixamo=1&char=mutant
+http://localhost:3000/threejs-arena/?mode=multiplayer&server=ws://localhost:8080
+```
+
+Procedural asset review:
+
+```text
+http://localhost:3000/threejs-arena/asset-inspector.html
+```
+
+The inspector dropdown is populated from the shared in-game procedural asset
+catalog. Generate offline multi-angle contact sheets for the complete gallery,
+villages, or one catalog asset with:
+
+```bash
+npm run render:structures
+npm run render:structures -- --asset=castle-keep
 ```
 
 Server:
