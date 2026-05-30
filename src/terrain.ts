@@ -5,30 +5,44 @@
 import * as THREE from 'three';
 import { createNoise2D } from 'simplex-noise';
 
-const TERRAIN_SIZE = 100;
-const TERRAIN_SEGMENTS = 100;
-const TERRAIN_MAX_HEIGHT = 3;
-const NOISE_SCALE_1 = 50;
-const NOISE_SCALE_2 = 25;
+// A large open world (one unit per segment, so SIZE === SEGMENTS keeps the
+// integer-floor height lookup valid). Rolling hills via layered noise, with a
+// flattened heart so the town / combat area stays walkable.
+const TERRAIN_SIZE = 240;
+const TERRAIN_SEGMENTS = 240;
+const TERRAIN_MAX_HEIGHT = 7;
+const FLATTEN_RADIUS = 34;   // radius (segments) of the gently-flat center
 
 /**
- * Generate height data using layered simplex noise
+ * Generate height data using layered simplex noise — broad rolling wavelengths
+ * plus finer detail, normalized to 0-255. The map center is eased toward a calm
+ * plateau so structures sit on near-flat ground.
  */
 function generateHeightData(width: number, height: number): Uint8Array {
   const noise2D = createNoise2D();
   const size = width * height;
   const data = new Uint8Array(size);
+  const cx = width / 2;
+  const cz = height / 2;
 
   for (let i = 0; i < size; i++) {
     const x = i % width;
     const y = Math.floor(i / width);
 
-    // Layered noise (octaves) creates more natural terrain
-    let v =
-      noise2D(x / NOISE_SCALE_1, y / NOISE_SCALE_1) * 0.5 +
-      noise2D(x / NOISE_SCALE_2, y / NOISE_SCALE_2) * 0.25;
+    // Layered octaves: broad rolling hills → medium swells → fine texture.
+    const v =
+      noise2D(x / 120, y / 120) * 0.55 +
+      noise2D(x / 55, y / 55) * 0.30 +
+      noise2D(x / 24, y / 24) * 0.15;
 
-    data[i] = (v + 0.75) * 128; // Normalize to 0-255
+    let n = v * 0.5 + 0.5; // → 0..1
+
+    // Flatten the center toward a common mid height (settled-clearing look).
+    const dist = Math.hypot(x - cx, y - cz);
+    const flat = 1 - Math.min(1, Math.max(0, (dist - FLATTEN_RADIUS) / 28 + 1));
+    n = THREE.MathUtils.lerp(n, 0.32, flat * 0.85);
+
+    data[i] = Math.round(Math.min(1, Math.max(0, n)) * 255);
   }
 
   return data;
@@ -101,13 +115,14 @@ export function createTerrain(): { mesh: THREE.Mesh; heightData: Uint8Array } {
     const y = posAttribute.getY(i);
     const z = posAttribute.getZ(i);
 
-    // Warm WoW outdoor palette: the lowland ground sits in the SAME green
-    // family as the grass so blades blend into a sward instead of popping as
-    // sticks on bare dirt. Rises through olive to dry tan slopes and pale rock.
-    if (y < 0.5) color.setHex(0x5b7a2e);
-    else if (y < 1.2) color.setHex(0x6f8a38);
-    else if (y < 1.8) color.setHex(0x8a9648);
-    else if (y < 2.3) color.setHex(0xb09a5c);
+    // Warm WoW outdoor palette, banded by elevation FRACTION so it scales with
+    // TERRAIN_MAX_HEIGHT: lush lowland green (same family as the grass) → olive
+    // → dry tan slopes → pale rock peaks.
+    const f = y / TERRAIN_MAX_HEIGHT;
+    if (f < 0.15) color.setHex(0x5b7a2e);
+    else if (f < 0.38) color.setHex(0x6f8a38);
+    else if (f < 0.60) color.setHex(0x8a9648);
+    else if (f < 0.80) color.setHex(0xb09a5c);
     else color.setHex(0xcabfa0);
 
     // Slow noise for patch variation + a fine hash for per-vertex sparkle.

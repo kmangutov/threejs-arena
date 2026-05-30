@@ -9,7 +9,6 @@ import { createTerrain } from './terrain';
 import { createForest } from './trees';
 
 // Arena dimensions
-const ARENA_SIZE = 40;
 const PILLAR_HEIGHT = 4;
 const PILLAR_RADIUS = 1.2;
 
@@ -174,72 +173,6 @@ function createRamp(
 }
 
 /**
- * Create individual boundary wall segments with entrance gaps
- * Each wall is split into left and right segments with a centered entrance
- */
-function createBoundaryWalls(): THREE.Group {
-  const walls = new THREE.Group();
-  walls.name = 'BoundaryWalls';
-
-  const wallHeight = 1.5;
-  const wallThickness = 0.5;
-  const halfSize = ARENA_SIZE / 2;
-  const entranceWidth = 6; // Width of the gap for each entrance
-
-  const wallMaterial = createStoneMaterial(0xa28b6e);
-
-  // Create wall segment and register collider
-  const createWallSegment = (
-    length: number,
-    x: number,
-    z: number,
-    rotY: number
-  ) => {
-    const geometry = new THREE.BoxGeometry(length, wallHeight, wallThickness);
-    const wall = new THREE.Mesh(geometry, wallMaterial);
-    wall.position.set(x, wallHeight / 2, z);
-    wall.rotation.y = rotY;
-    wall.castShadow = true;
-    wall.receiveShadow = true;
-    walls.add(wall);
-
-    // Register as collider
-    colliders.push({
-      type: 'box',
-      x,
-      z,
-      width: rotY === 0 ? length : wallThickness,
-      depth: rotY === 0 ? wallThickness : length,
-      height: wallHeight,
-      rotation: rotY
-    });
-
-    return wall;
-  };
-
-  const halfSegmentLength = (ARENA_SIZE - entranceWidth) / 2;
-  const offset = halfSegmentLength / 2 + entranceWidth / 2;
-
-  // North wall (z = -halfSize) - split left and right
-  createWallSegment(halfSegmentLength, -offset, -halfSize, 0);
-  createWallSegment(halfSegmentLength, offset, -halfSize, 0);
-
-  // South wall (z = halfSize) - split left and right
-  createWallSegment(halfSegmentLength, -offset, halfSize, 0);
-  createWallSegment(halfSegmentLength, offset, halfSize, 0);
-
-  // West wall (x = -halfSize) - split top and bottom
-  createWallSegment(halfSegmentLength, -halfSize, -offset, Math.PI / 2);
-  createWallSegment(halfSegmentLength, -halfSize, offset, Math.PI / 2);
-
-  // East wall (x = halfSize) - split top and bottom
-  createWallSegment(halfSegmentLength, halfSize, -offset, Math.PI / 2);
-  createWallSegment(halfSegmentLength, halfSize, offset, Math.PI / 2);
-
-  return walls;
-}
-
-/**
  * Get all collision shapes
  */
 export function getColliders(): Collider[] {
@@ -282,8 +215,8 @@ export function createArena(): THREE.Group {
   arena.add(createRamp(-3, 0, 2, 4, 1.2, Math.PI / 6));
   arena.add(createRamp(3, 0, 2, 4, 1.2, -Math.PI / 6));
 
-  // Boundary walls
-  arena.add(createBoundaryWalls());
+  // (Boundary walls removed — the world is open now; the pillars + ramps stay
+  // as a central landmark, not a pen.)
 
   // Forest
   arena.add(createForest(terrainHeightData));

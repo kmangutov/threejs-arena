@@ -33,9 +33,9 @@ export interface GrassFieldParams {
 
 export const DEFAULT_GRASS_PARAMS: GrassFieldParams = {
   seed: 1337,
-  count: 38000,
+  count: 54000,
   innerRadius: 2,
-  outerRadius: 42,
+  outerRadius: 72,
   bladeHeight: 0.4,
   bladeWidth: 0.11,
   windStrength: 0.1,

@@ -5,6 +5,7 @@
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { getTerrainHeight } from './terrain';
 
 const BASE = (import.meta as any).env?.BASE_URL ?? '/';
 const TREE_GLB_URL = `${BASE}trees/tree.glb`;
@@ -242,29 +243,25 @@ export function createForest(terrainHeightData: Uint8Array | null): THREE.Group 
   const forest = new THREE.Group();
   forest.name = 'Forest';
 
-  const minDist = 16;
-  const maxDist = 40;
-  const treeCount = 14;
+  // Scatter a woodland ring around the central clearing, plus looser clumps
+  // out across the rolling hills so the enlarged world reads as forested.
+  const minDist = 26;
+  const maxDist = 115;
+  const treeCount = 90;
 
   const placements: Array<{ x: number; z: number; y: number; scale: number; rotY: number }> = [];
   for (let i = 0; i < treeCount; i++) {
     const angle = Math.random() * Math.PI * 2;
-    const dist = minDist + Math.random() * (maxDist - minDist);
+    // Bias toward the nearer ring (sqrt) but allow distant stragglers.
+    const dist = minDist + Math.sqrt(Math.random()) * (maxDist - minDist);
     const x = Math.cos(angle) * dist;
     const z = Math.sin(angle) * dist;
-
-    let terrainHeight = 0;
-    if (terrainHeightData) {
-      const localX = Math.max(0, Math.min(99, Math.floor(x + 50)));
-      const localZ = Math.max(0, Math.min(99, Math.floor(z + 50)));
-      terrainHeight = (terrainHeightData[localZ * 100 + localX] / 255) * 3;
-    }
 
     placements.push({
       x,
       z,
-      y: terrainHeight,
-      scale: 1.6 + Math.random() * 1.0,
+      y: getTerrainHeight(x, z, terrainHeightData),
+      scale: 1.6 + Math.random() * 1.4,
       rotY: Math.random() * Math.PI * 2
     });
   }

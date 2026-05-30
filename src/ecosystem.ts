@@ -37,7 +37,7 @@ export const DEFAULT_PARAMS: EcosystemParams = {
   seed: 1337,
   biome: 'grassland',
   innerRadius: 9,
-  outerRadius: 38,
+  outerRadius: 72,
   flowerCount: 350,
   // Heavier rock count + power-law sizing produces many small pebbles around
   // a few rich veins, with the occasional hill-scale boulder.
