@@ -785,8 +785,103 @@ export function createMarketStall({ color, scale = 1, palette: colors = {} } = {
     position: [0, 2.7, 0],
     rotation: [0, 0, 0.07],
   });
+  for (const x of [-1.24, -0.42, 0.42, 1.24]) {
+    addMesh(group, new THREE.BoxGeometry(0.38, 0.035, 2.0), mat(p.clothGold), {
+      name: 'AwningStripe',
+      position: [x, 2.79 + x * 0.01, 0],
+      rotation: [0, 0, 0.07],
+    });
+  }
+  addBeam(group, wood, 0, 1.48, 0.74, 3.18, 0.13, 0.13);
+  for (const x of [-0.55, 0, 0.55]) {
+    addMesh(group, new THREE.SphereGeometry(0.2, 7, 5), mat(x === 0 ? p.clothGold : p.clothRed), {
+      name: 'MarketProduce',
+      position: [x, 1.23, 0.34],
+      scale: [1, 0.8, 1],
+    });
+  }
   place(group, createCrate({ scale: 0.66, palette: p }), -1.05, 0.95, 0);
   place(group, createBarrel({ scale: 0.65, palette: p }), 1.1, 0.98, 0);
+  group.scale.setScalar(scale);
+  return group;
+}
+
+export function createLanternPost({ scale = 1, palette: colors = {} } = {}) {
+  const p = palette(colors);
+  const group = new THREE.Group();
+  group.name = 'LanternPost';
+  const wood = mat(p.timberDark);
+  const iron = mat(p.iron);
+  addMesh(group, new THREE.CylinderGeometry(0.1, 0.16, 3.45, 6), wood, {
+    name: 'LanternPost',
+    position: [0, 1.72, 0],
+  });
+  addMesh(group, new THREE.ConeGeometry(0.18, 0.42, 5), wood, {
+    name: 'PostCap',
+    position: [0, 3.65, 0],
+  });
+  addBeam(group, wood, 0.52, 3.05, 0, 1.18, 0.12, 0.12, -0.16);
+  addMesh(group, new THREE.CylinderGeometry(0.025, 0.025, 0.48, 5), iron, {
+    name: 'LanternChain',
+    position: [1.05, 2.72, 0],
+  });
+  addMesh(group, new THREE.BoxGeometry(0.42, 0.54, 0.42), glowMat(0xffb53d), {
+    name: 'LanternGlow',
+    position: [1.05, 2.32, 0],
+  });
+  for (const x of [-0.24, 0.24]) {
+    for (const z of [-0.24, 0.24]) {
+      addMesh(group, new THREE.BoxGeometry(0.055, 0.72, 0.055), iron, {
+        name: 'LanternFrame',
+        position: [1.05 + x, 2.32, z],
+      });
+    }
+  }
+  addMesh(group, new THREE.ConeGeometry(0.42, 0.24, 4), iron, {
+    name: 'LanternRoof',
+    position: [1.05, 2.74, 0],
+    rotation: [0, Math.PI / 4, 0],
+  });
+  group.scale.setScalar(scale);
+  return group;
+}
+
+export function createWeaponRack({ scale = 1, palette: colors = {} } = {}) {
+  const p = palette(colors);
+  const group = new THREE.Group();
+  group.name = 'WeaponRack';
+  const wood = mat(p.timberDark);
+  const iron = mat(p.iron);
+  for (const x of [-1.12, 1.12]) {
+    addMesh(group, new THREE.CylinderGeometry(0.1, 0.14, 2.25, 6), wood, {
+      name: 'RackPost',
+      position: [x, 1.12, 0],
+    });
+  }
+  addBeam(group, wood, 0, 1.74, 0, 2.45, 0.16, 0.16);
+  addBeam(group, wood, 0, 0.72, 0, 2.45, 0.16, 0.16);
+  for (const [x, tilt] of [[-0.72, -0.08], [0, 0.06], [0.72, -0.04]]) {
+    addMesh(group, new THREE.CylinderGeometry(0.035, 0.05, 2.72, 5), wood, {
+      name: 'SpearShaft',
+      position: [x, 1.46, 0.06],
+      rotation: [0, 0, tilt],
+    });
+    addMesh(group, new THREE.ConeGeometry(0.14, 0.46, 4), iron, {
+      name: 'SpearHead',
+      position: [x - Math.sin(tilt) * 1.56, 3.02, 0.06],
+      rotation: [0, 0, tilt],
+    });
+  }
+  addMesh(group, new THREE.CylinderGeometry(0.52, 0.52, 0.16, 10), mat(p.clothRed), {
+    name: 'RackShield',
+    position: [0, 1.26, 0.2],
+    rotation: [Math.PI / 2, 0, 0],
+  });
+  addMesh(group, new THREE.ConeGeometry(0.18, 0.28, 8), iron, {
+    name: 'ShieldBoss',
+    position: [0, 1.26, 0.34],
+    rotation: [Math.PI / 2, 0, 0],
+  });
   group.scale.setScalar(scale);
   return group;
 }
@@ -945,6 +1040,8 @@ export function createVillageCluster({ seed = 1, fortified = false, scale = 1, p
   place(group, createCrate({ scale: 0.56, palette: p }), 3.0, 2.65, 0, 0.18);
   place(group, createBarrel({ scale: 0.7, palette: p }), -3.2, 4.5, 0, 0.1);
   place(group, createHandcart({ scale: 0.58, palette: p }), 3.2, -4.5, 0, -0.35);
+  place(group, createLanternPost({ scale: 0.74, palette: p }), 1.7, 1.35, 0, 0.18);
+  place(group, createWeaponRack({ scale: 0.66, palette: p }), 7.75, 2.25, 0, -0.72);
   place(group, createBanner({ color: p.clothRed, scale: 0.66, palette: p }), -4.9, -0.35);
   if (fortified) {
     place(group, createVillageGate({ scale: 0.72, palette: p }), 0.2, -7.0, 0, 0);
@@ -972,6 +1069,8 @@ export function createStructureGallery({ palette: colors = {} } = {}) {
   place(group, createCampfire({ scale: 0.8, palette: p }), 8.5, 5.2);
   place(group, createBench({ scale: 0.82, palette: p }), 10.7, 5.0, 0, -0.12);
   place(group, createHandcart({ scale: 0.68, palette: p }), 12.6, 4.3, 0, 0.18);
+  place(group, createLanternPost({ scale: 0.76, palette: p }), 15.2, 4.2, 0, -0.15);
+  place(group, createWeaponRack({ scale: 0.68, palette: p }), 17.0, 4.3, 0, 0.12);
   place(group, createCrate({ scale: 0.9, palette: p }), 12.4, 5.0);
   place(group, createBarrel({ scale: 0.86, palette: p }), 13.8, 5.1);
   place(group, createSignpost({ scale: 0.96, palette: p }), 15.2, 3.6, 0, 0.2);
@@ -991,6 +1090,8 @@ export const PROCEDURAL_ASSETS = [
   { id: 'bench', label: 'Bench', category: 'Village Props', create: createBench },
   { id: 'handcart', label: 'Handcart', category: 'Village Props', create: createHandcart },
   { id: 'anvil', label: 'Anvil', category: 'Village Props', create: createAnvil },
+  { id: 'lantern-post', label: 'Lantern Post', category: 'Village Props', create: createLanternPost },
+  { id: 'weapon-rack', label: 'Weapon Rack', category: 'Village Props', create: createWeaponRack },
   { id: 'signpost', label: 'Signpost', category: 'Village Props', create: createSignpost },
   { id: 'banner', label: 'Banner', category: 'Village Props', create: createBanner },
   { id: 'fence-segment', label: 'Fence Segment', category: 'Village Props', create: createFenceSegment },
