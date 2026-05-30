@@ -10,6 +10,19 @@ import { Holdable, HoldableProvider } from './holdable';
 import type { PreyRef, PreyProvider, PreyState } from './prey';
 import { combatContactRange, emitDamageSplat, emitHealSplat, healPreyState, maintainCombatSpacing, makePreyState } from './prey';
 import { resolveAnimalPhysics } from './animal-physics';
+import {
+  ATTACK_DURATION,
+  FLINCH_DURATION,
+  actionPulse,
+  grazeCycle,
+  makeAnimalActionState,
+  makeFurTexture,
+  tickAnimalActions,
+  triggerAttack,
+  triggerFlinch,
+  triggerGraze,
+  type AnimalActionState,
+} from './procedural-animal-visuals';
 
 const WALK_SPEED = 1.0;
 const TURN_RATE = 1.6;
@@ -46,6 +59,7 @@ interface Cow {
   held: boolean;
   mooCooldown: number;
   prey: PreyState;
+  actions: AnimalActionState;
   id: string;
   name: string;
 }
@@ -85,45 +99,9 @@ function getMooTexture(): THREE.CanvasTexture {
   return tex;
 }
 
-function makeCowHideTexture(bodyHex: number, spotHex: number): THREE.CanvasTexture {
-  const canvas = document.createElement('canvas');
-  canvas.width = 256;
-  canvas.height = 256;
-  const ctx = canvas.getContext('2d')!;
-  const toCss = (hex: number) => '#' + hex.toString(16).padStart(6, '0');
-  ctx.fillStyle = toCss(bodyHex);
-  ctx.fillRect(0, 0, 256, 256);
-
-  // Each spot is a cluster of 3-6 overlapping ellipses → soft, organic edge.
-  ctx.fillStyle = toCss(spotHex);
-  const spotCount = 6 + Math.floor(Math.random() * 5);
-  for (let i = 0; i < spotCount; i++) {
-    const cx = Math.random() * 256;
-    const cy = Math.random() * 256;
-    const blobs = 3 + Math.floor(Math.random() * 4);
-    for (let j = 0; j < blobs; j++) {
-      const ox = (Math.random() - 0.5) * 60;
-      const oy = (Math.random() - 0.5) * 60;
-      const rx = 18 + Math.random() * 28;
-      const ry = 18 + Math.random() * 28;
-      const rot = Math.random() * Math.PI;
-      ctx.beginPath();
-      ctx.ellipse(cx + ox, cy + oy, rx, ry, rot, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.RepeatWrapping;
-  return tex;
-}
-
 function buildCowMesh(): CowParts {
   const palette = PALETTE[Math.floor(Math.random() * PALETTE.length)];
-  // Hide texture carries the spots — body geometry stays clean.
-  const hideTex = makeCowHideTexture(palette.body, palette.spot);
+  const hideTex = makeFurTexture(palette.body, palette.spot, 'spots');
   const bodyMat = new THREE.MeshStandardMaterial({ map: hideTex, roughness: 0.9, metalness: 0.0 });
   const plainBodyMat = new THREE.MeshStandardMaterial({ color: palette.body, roughness: 0.9, metalness: 0.0 });
   const tuftMat = new THREE.MeshStandardMaterial({ color: palette.spot, roughness: 0.9 });
@@ -317,6 +295,7 @@ export class CowHerd implements HoldableProvider, PreyProvider {
       held: false,
       mooCooldown: MOO_INITIAL_DELAY[0] + Math.random() * (MOO_INITIAL_DELAY[1] - MOO_INITIAL_DELAY[0]),
       prey: makePreyState(120),       // cows are tanky
+      actions: makeAnimalActionState(),
       id: `cow-${this.cows.length + 1}`,
       name: 'Cow',
     };
@@ -385,6 +364,7 @@ export class CowHerd implements HoldableProvider, PreyProvider {
         if (c.prey.dead) return false;
         c.prey.hp -= amount;
         c.prey.lastHitAt = performance.now();
+        triggerFlinch(c.actions);
         emitDamageSplat(c.parts.group, amount);
         if (attacker?.alive) c.prey.combatTarget = attacker;
         if (c.prey.hp <= 0) {
@@ -489,26 +469,36 @@ export class CowHerd implements HoldableProvider, PreyProvider {
         cow.parts.head.rotation.x = 0;
         cow.parts.tail.rotation.y = 0;
         cow.parts.tailTuft.rotation.set(0, 0, 0);
+        cow.actions = makeAnimalActionState();
       }
     };
   }
 
   private updateCow(cow: Cow, delta: number): void {
+    tickAnimalActions(cow.actions, delta);
     this.updateCombat(cow, delta);
     const moving = cow.pauseTimer <= 0;
+    cow.parts.group.rotation.z = 0;
+    cow.parts.body.rotation.set(0, 0, 0);
+    cow.parts.head.position.set(0, 1.05, 0.78);
+    cow.parts.head.rotation.z = 0;
 
     if (!moving) {
       cow.pauseTimer -= delta;
-      // Idle: lazy tail flick to swat flies, slow head dip (grazing)
       const t = performance.now() * 0.003;
       cow.parts.tail.rotation.y = Math.sin(t) * 0.25;
       cow.parts.tailTuft.rotation.y = Math.sin(t - 0.6) * 0.5;
-      cow.parts.head.rotation.x = 0.2 + Math.sin(t * 0.4) * 0.15;
+      if (cow.actions.grazeTimer <= 0 && Math.random() < delta * 0.3) triggerGraze(cow.actions);
+      cow.parts.head.rotation.x = cow.actions.grazeTimer > 0
+        ? 0.24 + grazeCycle(cow.actions.grazeTimer) * 0.58
+        : 0.08 + Math.sin(t * 0.4) * 0.1;
       for (const leg of cow.parts.legs) leg.mesh.rotation.x *= 0.9;
+      this.applyActionPose(cow);
       this.applyTerrain(cow);
       return;
     }
 
+    cow.actions.grazeTimer = 0;
     cow.parts.head.rotation.x *= 0.9;
 
     const dx = cow.target.x - cow.pos.x;
@@ -558,7 +548,17 @@ export class CowHerd implements HoldableProvider, PreyProvider {
 
     cow.parts.head.rotation.x = Math.sin(cow.walkPhase) * 0.06;
 
+    this.applyActionPose(cow);
     this.applyTerrain(cow);
+  }
+
+  private applyActionPose(cow: Cow): void {
+    const flinch = actionPulse(cow.actions.flinchTimer, FLINCH_DURATION);
+    const attack = actionPulse(cow.actions.attackTimer, ATTACK_DURATION);
+    cow.parts.group.rotation.z = flinch * 0.16;
+    cow.parts.body.rotation.x = -attack * 0.12;
+    cow.parts.head.rotation.x -= attack * 0.54;
+    cow.parts.head.position.z += attack * 0.18;
   }
 
   private applyTerrain(cow: Cow): void {
@@ -589,7 +589,9 @@ export class CowHerd implements HoldableProvider, PreyProvider {
     }
     maintainCombatSpacing(cow.pos, target, attackRange);
     cow.yaw = Math.atan2(dx, dz);
+    cow.pauseTimer = Math.max(cow.pauseTimer, 0.16);
     if (cow.prey.attackTimer <= 0) {
+      triggerAttack(cow.actions);
       target.damage(9, this.makePreyRef(cow));
       cow.prey.attackTimer = 1.9;
     }
