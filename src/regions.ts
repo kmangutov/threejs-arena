@@ -169,7 +169,9 @@ function groundPatch(radius: number, color: number, opacity = 1): THREE.Mesh {
 function buildTown(height: HeightFn, center: THREE.Vector3): THREE.Group {
   const g = new THREE.Group();
   g.name = 'Town';
-  g.position.set(center.x, 0, center.z);
+  // Anchor the region at its terrain height; child props use a height offset
+  // RELATIVE to the center (h below), so the group Y must be the real ground.
+  g.position.set(center.x, height(center.x, center.z), center.z);
   const rng = makeRng(9001);
   const h: HeightFn = (x, z) => height(center.x + x, center.z + z) - height(center.x, center.z);
 
@@ -202,7 +204,9 @@ function buildTown(height: HeightFn, center: THREE.Vector3): THREE.Group {
 function buildFarmland(height: HeightFn, center: THREE.Vector3): THREE.Group {
   const g = new THREE.Group();
   g.name = 'Farmland';
-  g.position.set(center.x, 0, center.z);
+  // Anchor the region at its terrain height; child props use a height offset
+  // RELATIVE to the center (h below), so the group Y must be the real ground.
+  g.position.set(center.x, height(center.x, center.z), center.z);
   const rng = makeRng(4242);
   const h: HeightFn = (x, z) => height(center.x + x, center.z + z) - height(center.x, center.z);
 
@@ -235,7 +239,9 @@ function buildFarmland(height: HeightFn, center: THREE.Vector3): THREE.Group {
 function buildSwamp(height: HeightFn, center: THREE.Vector3): THREE.Group {
   const g = new THREE.Group();
   g.name = 'Swamp';
-  g.position.set(center.x, 0, center.z);
+  // Anchor the region at its terrain height; child props use a height offset
+  // RELATIVE to the center (h below), so the group Y must be the real ground.
+  g.position.set(center.x, height(center.x, center.z), center.z);
   const rng = makeRng(1337);
   const h: HeightFn = (x, z) => height(center.x + x, center.z + z) - height(center.x, center.z);
 
