@@ -22,6 +22,7 @@ export const DEFAULT_STRUCTURE_PALETTE = {
   clothBlue: 0x315d85,
   clothGold: 0xc9a13d,
   ember: 0xff8a24,
+  water: 0x4e9ab5,
 };
 
 export function makeRng(seed) {
@@ -468,6 +469,155 @@ export function createWell({ scale = 1, palette: colors = {} } = {}) {
     name: 'WellHandle',
     position: [1.1, 2.0, 0],
     rotation: [0, 0, Math.PI / 2],
+  });
+  group.scale.setScalar(scale);
+  return group;
+}
+
+export function createFountain({ scale = 1, palette: colors = {} } = {}) {
+  const p = palette(colors);
+  const group = new THREE.Group();
+  group.name = 'TownFountain';
+  const stone = mat(p.stone);
+  const light = mat(p.stoneLight);
+  addMesh(group, new THREE.CylinderGeometry(2.22, 2.42, 0.58, 12, 1, true), stone, {
+    name: 'FountainBasin',
+    position: [0, 0.29, 0],
+  });
+  addMesh(group, new THREE.TorusGeometry(2.26, 0.2, 6, 12), light, {
+    name: 'FountainRim',
+    position: [0, 0.62, 0],
+    rotation: [Math.PI / 2, 0, 0],
+  });
+  addMesh(group, new THREE.CylinderGeometry(2.06, 2.06, 0.08, 12), glowMat(p.water), {
+    name: 'FountainWater',
+    position: [0, 0.56, 0],
+  });
+  addMesh(group, new THREE.CylinderGeometry(0.58, 0.78, 1.94, 9), stone, {
+    name: 'FountainPedestal',
+    position: [0, 1.5, 0],
+  });
+  addMesh(group, new THREE.TorusGeometry(0.72, 0.16, 6, 10), light, {
+    name: 'FountainPedestalBand',
+    position: [0, 2.18, 0],
+    rotation: [Math.PI / 2, 0, 0],
+  });
+  addMesh(group, new THREE.CylinderGeometry(1.1, 0.72, 0.36, 10), light, {
+    name: 'FountainUpperBowl',
+    position: [0, 2.6, 0],
+  });
+  addMesh(group, new THREE.CylinderGeometry(0.94, 0.94, 0.06, 10), glowMat(p.water), {
+    name: 'FountainUpperWater',
+    position: [0, 2.8, 0],
+  });
+  addMesh(group, new THREE.ConeGeometry(0.34, 0.96, 7), light, {
+    name: 'FountainFinial',
+    position: [0, 3.22, 0],
+  });
+  for (let i = 0; i < 4; i++) {
+    const a = i * Math.PI * 0.5;
+    addMesh(group, new THREE.CylinderGeometry(0.055, 0.055, 1.28, 5), glowMat(p.water), {
+      name: 'WaterJet',
+      position: [Math.sin(a) * 0.96, 1.82, Math.cos(a) * 0.96],
+      rotation: [Math.cos(a) * 0.72, 0, -Math.sin(a) * 0.72],
+    });
+  }
+  group.scale.setScalar(scale);
+  return group;
+}
+
+export function createNoticeBoard({ scale = 1, palette: colors = {} } = {}) {
+  const p = palette(colors);
+  const group = new THREE.Group();
+  group.name = 'NoticeBoard';
+  const wood = mat(p.timberDark);
+  for (const x of [-1.02, 1.02]) {
+    addMesh(group, new THREE.CylinderGeometry(0.1, 0.15, 2.42, 6), wood, {
+      name: 'BoardPost',
+      position: [x, 1.21, 0],
+    });
+    addMesh(group, new THREE.ConeGeometry(0.16, 0.38, 5), wood, {
+      name: 'BoardPostCap',
+      position: [x, 2.58, 0],
+    });
+  }
+  addMesh(group, new THREE.BoxGeometry(2.48, 1.42, 0.16), mat(p.timber), {
+    name: 'NoticeBoardPanel',
+    position: [0, 1.64, 0],
+  });
+  for (const [x, y, color] of [
+    [-0.66, 1.82, p.plasterLight],
+    [0.12, 1.48, p.clothGold],
+    [0.68, 1.94, p.plasterLight],
+  ]) {
+    addMesh(group, new THREE.BoxGeometry(0.58, 0.66, 0.035), mat(color), {
+      name: 'Notice',
+      position: [x, y, 0.1],
+      rotation: [0, 0, x * 0.08],
+    });
+    addMesh(group, new THREE.CylinderGeometry(0.045, 0.045, 0.04, 6), mat(p.iron), {
+      name: 'NoticePin',
+      position: [x, y + 0.22, 0.15],
+      rotation: [Math.PI / 2, 0, 0],
+    });
+  }
+  addMesh(group, new THREE.BoxGeometry(2.82, 0.16, 0.54), mat(p.thatch), {
+    name: 'NoticeBoardRoof',
+    position: [0, 2.54, 0],
+    rotation: [0.08, 0, 0],
+  });
+  group.scale.setScalar(scale);
+  return group;
+}
+
+export function createHayBale({ scale = 1, palette: colors = {} } = {}) {
+  const p = palette(colors);
+  const group = new THREE.Group();
+  group.name = 'HayBale';
+  const hay = mat(p.thatchLight);
+  const tie = mat(p.timberDark);
+  addMesh(group, new THREE.CylinderGeometry(0.72, 0.72, 1.45, 10), hay, {
+    name: 'RolledHay',
+    position: [0, 0.72, 0],
+    rotation: [0, 0, Math.PI / 2],
+  });
+  for (const x of [-0.43, 0.43]) {
+    addMesh(group, new THREE.TorusGeometry(0.74, 0.045, 5, 10), tie, {
+      name: 'HayBinding',
+      position: [x, 0.72, 0],
+      rotation: [0, Math.PI / 2, 0],
+    });
+  }
+  group.scale.setScalar(scale);
+  return group;
+}
+
+export function createGraveMarker({ scale = 1, palette: colors = {} } = {}) {
+  const p = palette(colors);
+  const group = new THREE.Group();
+  group.name = 'GraveMarker';
+  const stone = mat(p.stoneDark);
+  addMesh(group, new THREE.BoxGeometry(0.82, 1.28, 0.3), stone, {
+    name: 'Gravestone',
+    position: [0, 0.64, 0],
+    rotation: [0.02, 0, -0.05],
+  });
+  addMesh(group, new THREE.CylinderGeometry(0.42, 0.42, 0.32, 10), stone, {
+    name: 'GravestoneTop',
+    position: [0, 1.22, 0],
+    rotation: [Math.PI / 2, 0, 0],
+  });
+  addMesh(group, new THREE.BoxGeometry(1.18, 0.16, 0.68), mat(p.stone), {
+    name: 'GraveFoot',
+    position: [0, 0.1, 0.26],
+  });
+  addMesh(group, new THREE.BoxGeometry(0.12, 0.58, 0.06), mat(p.stoneLight), {
+    name: 'GraveMark',
+    position: [0, 0.8, 0.18],
+  });
+  addMesh(group, new THREE.BoxGeometry(0.42, 0.12, 0.06), mat(p.stoneLight), {
+    name: 'GraveMark',
+    position: [0, 0.92, 0.18],
   });
   group.scale.setScalar(scale);
   return group;
@@ -1020,6 +1170,58 @@ export function createBlacksmith({ seed = 1, scale = 1, palette: colors = {} } =
   return group;
 }
 
+export function createStable({ scale = 1, palette: colors = {} } = {}) {
+  const p = palette(colors);
+  const group = new THREE.Group();
+  group.name = 'VillageStable';
+  const plaster = mat(p.plaster);
+  const wood = mat(p.timberDark);
+  const roof = mat(p.thatch);
+
+  addMesh(group, new THREE.BoxGeometry(7.5, 0.42, 4.7), mat(p.stoneDark), {
+    name: 'StableFoundation',
+    position: [0, 0.21, 0],
+  });
+  addMesh(group, new THREE.BoxGeometry(7.08, 2.72, 0.32), plaster, {
+    name: 'StableBackWall',
+    position: [0, 1.62, -2.12],
+  });
+  addMesh(group, new THREE.BoxGeometry(7.86, 0.22, 3.35), roof, {
+    name: 'StableRoof',
+    position: [0, 3.5, 1.04],
+    rotation: [0.62, 0, 0],
+  });
+  addMesh(group, new THREE.BoxGeometry(7.86, 0.22, 3.35), roof, {
+    name: 'StableRoof',
+    position: [0, 3.5, -1.04],
+    rotation: [-0.62, 0, 0],
+  });
+  addBeam(group, wood, 0, 4.48, 0, 8.04, 0.18, 0.18);
+  for (const x of [-3.45, -1.15, 1.15, 3.45]) {
+    addMesh(group, new THREE.CylinderGeometry(0.11, 0.16, 3.12, 6), wood, {
+      name: 'StablePost',
+      position: [x, 1.56, 2.04],
+    });
+    addBeam(group, wood, x, 1.28, 0.12, 0.14, 2.42, 4.2);
+  }
+  for (const x of [-2.3, 0, 2.3]) {
+    addMesh(group, new THREE.BoxGeometry(1.82, 0.58, 0.62), mat(p.timber), {
+      name: 'StableTrough',
+      position: [x, 0.52, 1.54],
+    });
+    addMesh(group, new THREE.BoxGeometry(1.56, 0.1, 0.48), mat(p.thatchLight), {
+      name: 'TroughHay',
+      position: [x, 0.84, 1.54],
+    });
+  }
+  place(group, createHayBale({ scale: 0.82, palette: p }), -2.62, -1.34, 0, 0.08);
+  place(group, createHayBale({ scale: 0.68, palette: p }), -1.56, -1.32, 0, -0.12);
+  place(group, createLanternPost({ scale: 0.6, palette: p }), 3.16, 1.82, 0, 0.04);
+  group.userData.collider = { type: 'box', width: 7.5, depth: 4.7, height: 3.2 };
+  group.scale.setScalar(scale);
+  return group;
+}
+
 export function createMarketStall({ color, scale = 1, palette: colors = {} } = {}) {
   const p = palette(colors);
   const group = new THREE.Group();
@@ -1367,9 +1569,9 @@ export function createFortifiedTown({ seed = 1, scale = 1, palette: colors = {} 
   place(group, createInn({ seed: seed + 11, scale: 0.78, palette: p }), -10.0, 3.1, 0, 0.42);
   place(group, createBlacksmith({ seed: seed + 19, scale: 0.72, palette: p }), 9.4, 2.5, 0, -0.62);
   place(group, createTimberHouse({ seed: seed + 23, scale: 0.68, palette: p }), -10.2, -6.8, 0, 0.24);
-  place(group, createTimberHouse({ seed: seed + 29, scale: 0.64, palette: p }), 9.6, -7.2, 0, -0.34);
+  place(group, createStable({ scale: 0.68, palette: p }), 9.6, -7.8, 0, -0.2);
   place(group, createRoundHut({ seed: seed + 31, scale: 0.72, palette: p }), 5.4, 8.6, 0, -0.3);
-  place(group, createWell({ scale: 0.78, palette: p }), -5.1, 6.0);
+  place(group, createFountain({ scale: 0.76, palette: p }), -5.1, 6.0);
   place(group, createMarketStall({ color: p.clothBlue, scale: 0.74, palette: p }), -5.0, -5.8, 0, 0.1);
   place(group, createMarketStall({ color: p.clothRed, scale: 0.72, palette: p }), 4.4, -5.4, 0, -0.2);
   place(group, createVillageGate({ scale: 0.9, palette: p }), 0, -16.5);
@@ -1386,6 +1588,11 @@ export function createFortifiedTown({ seed = 1, scale = 1, palette: colors = {} 
   place(group, createBench({ scale: 0.72, palette: p }), 4.2, 4.0, 0, -0.58);
   place(group, createSackPile({ scale: 0.68, palette: p }), -6.6, -5.1, 0, 0.04);
   place(group, createWoodpile({ scale: 0.68, palette: p }), 10.8, 4.8, 0, -0.62);
+  place(group, createNoticeBoard({ scale: 0.74, palette: p }), -4.4, -11.8, 0, 0.1);
+  place(group, createHayBale({ scale: 0.72, palette: p }), 12.4, -5.6, 0, -0.18);
+  place(group, createGraveMarker({ scale: 0.72, palette: p }), -4.72, -1.85, 0, -0.12);
+  place(group, createGraveMarker({ scale: 0.66, palette: p }), -4.86, 0.08, 0, 0.08);
+  place(group, createGraveMarker({ scale: 0.7, palette: p }), -4.68, 1.92, 0, -0.06);
   group.scale.setScalar(scale);
   return group;
 }
@@ -1417,6 +1624,11 @@ export function createStructureGallery({ palette: colors = {} } = {}) {
   place(group, createInn({ seed: 58, scale: 0.62, palette: p }), -17.2, 15.0, 0, 0.08);
   place(group, createChapel({ scale: 0.56, palette: p }), -8.0, 15.0);
   place(group, createFortifiedWall({ length: 8.5, scale: 0.64, palette: p }), 1.0, 15.0);
+  place(group, createStable({ scale: 0.64, palette: p }), 10.0, 15.0);
+  place(group, createFountain({ scale: 0.7, palette: p }), 17.6, 15.0);
+  place(group, createNoticeBoard({ scale: 0.72, palette: p }), 21.2, 14.8);
+  place(group, createHayBale({ scale: 0.72, palette: p }), 23.5, 15.0);
+  place(group, createGraveMarker({ scale: 0.76, palette: p }), 25.6, 15.0);
   return group;
 }
 
@@ -1426,6 +1638,7 @@ export const PROCEDURAL_ASSETS = [
   { id: 'inn', label: 'Village Inn', category: 'Buildings', create: createInn },
   { id: 'timber-house', label: 'Timber House', category: 'Buildings', create: createTimberHouse },
   { id: 'blacksmith', label: 'Blacksmith Workshop', category: 'Buildings', create: createBlacksmith },
+  { id: 'stable', label: 'Village Stable', category: 'Buildings', create: createStable },
   { id: 'longhouse', label: 'Longhouse', category: 'Buildings', create: createLonghouse },
   { id: 'round-hut', label: 'Round Hut', category: 'Buildings', create: createRoundHut },
   { id: 'watchtower', label: 'Watchtower', category: 'Fortifications', create: createWatchtower },
@@ -1433,6 +1646,10 @@ export const PROCEDURAL_ASSETS = [
   { id: 'fortified-wall', label: 'Fortified Wall', category: 'Fortifications', create: createFortifiedWall },
   { id: 'market-stall', label: 'Market Stall', category: 'Village Props', create: createMarketStall },
   { id: 'well', label: 'Roofed Well', category: 'Village Props', create: createWell },
+  { id: 'fountain', label: 'Town Fountain', category: 'Village Props', create: createFountain },
+  { id: 'notice-board', label: 'Notice Board', category: 'Village Props', create: createNoticeBoard },
+  { id: 'hay-bale', label: 'Hay Bale', category: 'Village Props', create: createHayBale },
+  { id: 'grave-marker', label: 'Grave Marker', category: 'Village Props', create: createGraveMarker },
   { id: 'bench', label: 'Bench', category: 'Village Props', create: createBench },
   { id: 'handcart', label: 'Handcart', category: 'Village Props', create: createHandcart },
   { id: 'anvil', label: 'Anvil', category: 'Village Props', create: createAnvil },
