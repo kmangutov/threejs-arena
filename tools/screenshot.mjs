@@ -47,6 +47,22 @@ page.on('console', msg => {
 await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
 await new Promise(r => setTimeout(r, wait));
 
+if (args.clean) {
+  // Beauty shot: hide the gameplay HUD overlays and the dev axis gizmo so the
+  // frame is pure world. Keeps the 3D look comparable to the WoW reference shots.
+  await page.evaluate(() => {
+    // Hide every body child except the WebGL canvas — robustly strips all HUD,
+    // help text, dev panels and any injected overlays.
+    for (const el of Array.from(document.body.children)) {
+      if (el.tagName !== 'CANVAS') el.style.display = 'none';
+    }
+    const g = (window).__game;
+    const gizmo = g?.scene?.getObjectByName?.('AxisGizmo');
+    if (gizmo) gizmo.visible = false;
+  });
+  await new Promise(r => setTimeout(r, 100));
+}
+
 if (args.grasscloseup) {
   // Move player into a grass-dense area + zoom camera in for a stomp shot.
   await page.evaluate(() => {

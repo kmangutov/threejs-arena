@@ -140,7 +140,7 @@ export class Rivers extends THREE.Group {
 
     const rng = mulberry32(p.seed);
     const bankMat = new THREE.MeshLambertMaterial({
-      color: 0xc7a87a,    // sandy beige
+      color: 0x6e6a42,    // damp mossy earth — blends with the grassy sward
       side: THREE.DoubleSide,
     });
     for (let i = 0; i < p.riverCount; i++) {
@@ -255,7 +255,7 @@ function buildRiverRibbon(
   // Sandy banks: a wider strip following the same curve, sitting flush with
   // terrain. Two side-strips (one per bank) drawn just outside the water
   // edges. Gives the river a visible silhouette from any angle.
-  const bankWidth = p.width * 0.45;
+  const bankWidth = p.width * 0.28;
   const bankL = buildBankStrip(curve, p.segments, -p.width * 0.5 - bankWidth * 0.5, bankWidth, height);
   const bankR = buildBankStrip(curve, p.segments, p.width * 0.5 + bankWidth * 0.5, bankWidth, height);
 

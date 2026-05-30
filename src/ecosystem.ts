@@ -57,14 +57,16 @@ interface Palette {
 
 const PALETTES: Record<Biome, Palette> = {
   grassland: {
-    grass: [0x4f7f2a, 0x6fa540],
+    // Base sits in the ground's olive family; tip lifts to a soft yellow-green
+    // so blades blend with the sward instead of reading as neon sticks.
+    grass: [0x4e6b28, 0x9bbf55],
     flower: [0xf2c14e, 0xe85d75, 0xf0eaf4, 0xa86fe4],
     rock: 0x7a7368,
     mushroomCap: 0xc44a3f,
     mushroomStem: 0xf3ead4,
     hutWall: 0x8a6a3d,
     hutRoof: 0x6a3a1f,
-    ground: 0x5a8a3a,
+    ground: 0x6f9a3e,
   },
   autumn: {
     grass: [0x8a5a1a, 0xb88340],
@@ -157,7 +159,9 @@ export class Ecosystem extends THREE.Group {
     this.grass.params = {
       ...this.grass.params,
       seed: this.params.seed ^ 0xA5A5,
-      innerRadius: this.params.innerRadius,
+      // Grass fills much closer to center than props do — a bare combat ring
+      // looks artificial, so decouple it from the prop-exclusion innerRadius.
+      innerRadius: Math.min(this.params.innerRadius, 2.5),
       outerRadius: this.params.outerRadius,
       baseColor: palette.grass[0],
       tipColor: palette.grass[1],

@@ -700,7 +700,10 @@ async function init(): Promise<GameState> {
   const scene = new THREE.Scene();
   // Warm Nagrand-like horizon haze; sky shader paints the actual dome.
   scene.background = new THREE.Color(0x6b8db5);
-  scene.fog = new THREE.Fog(0x9bb6c9, 45, 110);
+  // Pulled-in haze gives the painterly WoW depth — distant trees/hills fade
+  // into atmosphere. Colour is overwritten per-frame by the sky to match the
+  // horizon; only the near/far falloff matters here.
+  scene.fog = new THREE.Fog(0x9bb6c9, 32, 92);
 
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   if (!renderer.getContext()) {
@@ -713,7 +716,9 @@ async function init(): Promise<GameState> {
   // WoW-style: warmer exposure + AgX-like filmic curve via ACES, plus a
   // saturation lift through outputColorSpace (sRGB).
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.15;
+  // Held at ~1.0 so brightly-lit ground keeps its green instead of rolling off
+  // to pale tan under the strong midday key.
+  renderer.toneMappingExposure = 1.0;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   document.body.appendChild(renderer.domElement);
 

@@ -101,11 +101,14 @@ export function createTerrain(): { mesh: THREE.Mesh; heightData: Uint8Array } {
     const y = posAttribute.getY(i);
     const z = posAttribute.getZ(i);
 
-    if (y < 0.5) color.setHex(0x3a7d5f);
-    else if (y < 1.2) color.setHex(0x5a9d7f);
-    else if (y < 1.8) color.setHex(0x7ab99f);
-    else if (y < 2.3) color.setHex(0xaa9966);
-    else color.setHex(0xcccccc);
+    // Warm WoW outdoor palette: the lowland ground sits in the SAME green
+    // family as the grass so blades blend into a sward instead of popping as
+    // sticks on bare dirt. Rises through olive to dry tan slopes and pale rock.
+    if (y < 0.5) color.setHex(0x5b7a2e);
+    else if (y < 1.2) color.setHex(0x6f8a38);
+    else if (y < 1.8) color.setHex(0x8a9648);
+    else if (y < 2.3) color.setHex(0xb09a5c);
+    else color.setHex(0xcabfa0);
 
     // Slow noise for patch variation + a fine hash for per-vertex sparkle.
     const patch = noise(x * 0.06, z * 0.06);     // -1..1

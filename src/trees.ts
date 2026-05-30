@@ -46,7 +46,7 @@ function startWindTicker() {
  * shader used by the GLB trees, exposed so procedural trees can share the
  * exact same look (and the same alpha texture once loaded).
  */
-export function createFoliageMaterialPublic(alphaMap: THREE.Texture, color: number = 0x3f6d21): THREE.MeshStandardMaterial {
+export function createFoliageMaterialPublic(alphaMap: THREE.Texture, color: number = 0x5d8a37): THREE.MeshStandardMaterial {
   const m = createFoliageMaterial(alphaMap);
   m.color.setHex(color);
   return m;
@@ -68,7 +68,7 @@ export function getFoliageAlphaTexture(): Promise<THREE.Texture> {
 
 function createFoliageMaterial(alphaMap: THREE.Texture): THREE.MeshStandardMaterial {
   const material = new THREE.MeshStandardMaterial({
-    color: new THREE.Color('#3f6d21'),
+    color: new THREE.Color('#5d8a37'),
     alphaMap,
     alphaTest: 0.5,
     transparent: false,
@@ -155,7 +155,7 @@ interface TreeAssets {
   trunkMesh: THREE.Mesh;
   foliageMesh: THREE.Mesh;
   foliageMaterial: THREE.MeshStandardMaterial;
-  trunkMaterial: THREE.MeshBasicMaterial;
+  trunkMaterial: THREE.Material;
 }
 
 let assetsPromise: Promise<TreeAssets> | null = null;
@@ -194,7 +194,13 @@ function loadTreeAssets(): Promise<TreeAssets> {
     }
 
     const foliageMaterial = createFoliageMaterial(alphaMap);
-    const trunkMaterial = new THREE.MeshBasicMaterial({ color: 0x000000 });
+    // Lit warm-brown bark instead of the tutorial's flat unlit black, so the
+    // trunk catches the sun and the tree doesn't read as a black blob.
+    const trunkMaterial = new THREE.MeshStandardMaterial({
+      color: 0x4a3526,
+      roughness: 0.95,
+      metalness: 0.0,
+    });
 
     startWindTicker();
 

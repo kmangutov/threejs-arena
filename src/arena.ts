@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 // @ts-ignore - JS texture modules
 import { createDiffuse as createPillarDiffuse, createBump as createPillarBump } from './textures/pillar_rock/index.js';
-import { createTerrain, createWaterPlane } from './terrain';
+import { createTerrain } from './terrain';
 import { createForest } from './trees';
 
 // Arena dimensions
@@ -239,8 +239,8 @@ export function createArena(): THREE.Group {
   terrainHeightData = heightData;
   arena.add(terrain);
 
-  // Water plane
-  arena.add(createWaterPlane());
+  // (Removed full-map water plane: it covered the whole arena at y=0.05 and
+  // washed the low central combat area teal. Real water is the Rivers system.)
 
   // 4 main pillars in cardinal positions (Nagrand-style)
   const pillarOffset = 8;

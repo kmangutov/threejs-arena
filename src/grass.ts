@@ -33,17 +33,19 @@ export interface GrassFieldParams {
 
 export const DEFAULT_GRASS_PARAMS: GrassFieldParams = {
   seed: 1337,
-  count: 12000,
-  innerRadius: 9,
-  outerRadius: 38,
-  bladeHeight: 0.85,
-  bladeWidth: 0.10,
-  windStrength: 0.18,
-  windSpeed: 1.6,
-  baseColor: 0x274a16,
-  tipColor: 0x8fc24a,
-  hueJitter: 0.18,
-  patchiness: 0.65,
+  count: 38000,
+  innerRadius: 2,
+  outerRadius: 42,
+  bladeHeight: 0.4,
+  bladeWidth: 0.11,
+  windStrength: 0.1,
+  windSpeed: 1.5,
+  // Warm Nagrand/Elwynn olive→lime. Brighter base so the field reads as a
+  // continuous carpet rather than dark-rooted neon spikes.
+  baseColor: 0x4c6a2c,
+  tipColor: 0x9fc457,
+  hueJitter: 0.14,
+  patchiness: 0.3,
   crossPlanes: true,
 };
 
@@ -127,8 +129,9 @@ const FRAGMENT_SHADER = /* glsl */ `
   uniform vec3 uTipColor;
 
   void main() {
-    // Tip-to-base gradient: clarity = darker at base (0.5), brighter at tip (1.0).
-    float clarity = vUv.y * 0.5 + 0.5;
+    // Tip-to-base gradient: gentle ambient-occlusion at the base only. Kept
+    // shallow (0.72 → 1.0) so blades read as a lit carpet, not dark spikes.
+    float clarity = vUv.y * 0.28 + 0.72;
     vec3 col = mix(uBaseColor, uTipColor, vUv.y) * vInstanceTint;
     gl_FragColor = vec4(col * clarity, 1.0);
   }
@@ -254,10 +257,13 @@ export class GrassField extends THREE.Group {
         Math.max(0, Math.min(1, hsl.s)),
         Math.max(0, Math.min(1, hsl.l + lightShift)),
       );
-      // Stored as multiplier: divide by tipColor luminance so 1.0 == identity.
-      tints[i * 3 + 0] = tinted.r / Math.max(0.001, tintBase.r);
-      tints[i * 3 + 1] = tinted.g / Math.max(0.001, tintBase.g);
-      tints[i * 3 + 2] = tinted.b / Math.max(0.001, tintBase.b);
+      // Stored as multiplier: divide by tipColor per channel so 1.0 == identity.
+      // Clamp tightly so a hue nudge on a low channel (e.g. blue in a green
+      // tip) can't explode into a neon spike.
+      const clampTint = (v: number) => Math.max(0.75, Math.min(1.25, v));
+      tints[i * 3 + 0] = clampTint(tinted.r / Math.max(0.001, tintBase.r));
+      tints[i * 3 + 1] = clampTint(tinted.g / Math.max(0.001, tintBase.g));
+      tints[i * 3 + 2] = clampTint(tinted.b / Math.max(0.001, tintBase.b));
 
       phases[i] = rng() * Math.PI * 2;
     }

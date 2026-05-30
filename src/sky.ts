@@ -305,7 +305,9 @@ export class SkyEnvironment extends THREE.Group {
   private readonly upperSkyColor = new THREE.Color();
   private readonly sunColor = new THREE.Color();
   private elapsedTime = 0;
-  private gameMinutes = 9 * 60;
+  // Start late morning so the default lighting is the bright, warm WoW midday
+  // look (high-ish sun, white-gold key) rather than low orange dawn.
+  private gameMinutes = 11 * 60;
 
   constructor() {
     super();
@@ -448,8 +450,8 @@ export class SkyEnvironment extends THREE.Group {
       this.sun.intensity = isInDarkTransition
         ? 0.25
         : Math.min(3.5, Math.pow(normalizedElevation, 1.2) * 3.5);
-      this.ambient.intensity = 0.2 + normalizedElevation * 0.3;
-      this.hemi.intensity = 0.15 + normalizedElevation * 0.35;
+      this.ambient.intensity = 0.34 + normalizedElevation * 0.30;
+      this.hemi.intensity = 0.30 + normalizedElevation * 0.35;
       this.clouds.visible = true;
       this.stars.visible = false;
       this.cloudMaterial.uniforms.uCloudColor.value.copy(
@@ -495,7 +497,9 @@ export class SkyEnvironment extends THREE.Group {
     this.sun.color.copy(this.sunColor);
 
     this.hemi.color.copy(this.upperSkyColor);
-    this.hemi.groundColor.set(isDaytime ? 0x3d5c3d : 0x10140f);
+    // Warm earthy ground bounce in daylight (sun-warmed soil/grass), like the
+    // warm fill in WoW outdoor zones.
+    this.hemi.groundColor.set(isDaytime ? 0x6b5a30 : 0x10140f);
 
     this.cloudMaterial.uniforms.uTime.value += delta;
     this.cloudMaterial.uniforms.cameraPos.value.copy(camera.position);
