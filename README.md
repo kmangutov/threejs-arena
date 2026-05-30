@@ -20,6 +20,30 @@ http://localhost:5173/?mode=standalone&mixamo=1&char=mutant
 http://localhost:5173/?mode=multiplayer&server=ws://localhost:8080
 ```
 
+Headless beauty screenshot (Puppeteer + swiftshader, no GPU needed):
+
+```bash
+npm run screenshot -- --out=tools/screenshots/latest.png --hero --clean
+```
+
+The harness defaults to `http://localhost:3000/threejs-arena/?mode=standalone`
+(pass `--url=...` for another port). `--clean` hides the HUD + dev gizmo for a
+shot directly comparable to the reference art; other camera flags: `--hero`,
+`--aerial`, `--pose=x,y,z,yaw,pitch,distance`.
+
+Browser-independent structure contact sheets (SVGRenderer, no WebGL):
+
+```bash
+npm run render:structures
+```
+
+Writes multi-angle PNG sheets of the procedural buildings/villages under
+`tools/screenshots/structures/`.
+
+> WSL note: this machine has no working system Node, so prefix node/npm commands
+> with the portable runtime — `PATH="$HOME/.local/node20/bin:$PATH" npm run dev` —
+> and screenshots also need `LD_LIBRARY_PATH=$HOME/.local/chromelibs`.
+
 Server:
 
 ```bash
