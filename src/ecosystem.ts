@@ -166,7 +166,9 @@ export class Ecosystem extends THREE.Group {
       // Grass grows into the arena while larger props stay outside the
       // combat ring. This matches WoW's dense ground cover without clutter.
       innerRadius: Math.min(this.params.innerRadius, 2.5),
-      outerRadius: this.params.outerRadius,
+      // Grass spreads into a broad meadow well past the prop radius so the
+      // ground cover doesn't end in an obvious disc near the player.
+      outerRadius: Math.max(this.params.outerRadius, 96),
       baseColor: palette.grass[0],
       tipColor: palette.grass[1],
     };

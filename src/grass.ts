@@ -14,6 +14,7 @@
  */
 
 import * as THREE from 'three';
+import { REGION_FOOTPRINTS } from './regions';
 
 export interface GrassFieldParams {
   seed: number;
@@ -33,9 +34,9 @@ export interface GrassFieldParams {
 
 export const DEFAULT_GRASS_PARAMS: GrassFieldParams = {
   seed: 1337,
-  count: 54000,
+  count: 72000,
   innerRadius: 2,
-  outerRadius: 72,
+  outerRadius: 96,
   bladeHeight: 0.4,
   bladeWidth: 0.11,
   windStrength: 0.1,
@@ -316,6 +317,8 @@ function clusterPlacements(
     const r = Math.sqrt(rng() * (outer * outer - inner * inner) + inner * inner);
     const x = Math.cos(a) * r;
     const z = Math.sin(a) * r;
+    // Don't grass over the themed regions (towns, swamps have their own ground).
+    if (REGION_FOOTPRINTS.some(f => Math.hypot(x - f.x, z - f.z) < f.r - 4)) continue;
     // Density mask: noise ∈ [-1, 1] → accept probability.
     const n = (noise(x, z) + 1) * 0.5;          // 0..1
     const accept = 1 - patchiness + patchiness * n;

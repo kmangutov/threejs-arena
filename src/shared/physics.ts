@@ -17,8 +17,8 @@ export const PLAYER_HEIGHT = 1.8;
 // Arena bounds
 export const ARENA_SIZE = 40;
 // The old arena pen is gone — the player roams the whole open world. This clamp
-// just keeps them on the terrain mesh (terrain spans ±120; leave a margin).
-export const ARENA_BOUND = 115;
+// just keeps them on the terrain mesh (terrain spans ±160; leave a margin).
+export const ARENA_BOUND = 150;
 
 // Pillar dimensions
 export const PILLAR_HEIGHT = 4;

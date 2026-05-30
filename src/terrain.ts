@@ -9,10 +9,10 @@ import { REGION_FOOTPRINTS } from './regions';
 // A large open world (one unit per segment, so SIZE === SEGMENTS keeps the
 // integer-floor height lookup valid). Rolling hills via layered noise, with a
 // flattened heart so the town / combat area stays walkable.
-const TERRAIN_SIZE = 240;
-const TERRAIN_SEGMENTS = 240;
+const TERRAIN_SIZE = 320;
+const TERRAIN_SEGMENTS = 320;
 const TERRAIN_MAX_HEIGHT = 7;
-const FLATTEN_RADIUS = 34;   // radius (segments) of the gently-flat center
+const FLATTEN_RADIUS = 44;   // radius (segments) of the gently-flat center
 
 /**
  * Generate height data using layered simplex noise — broad rolling wavelengths

@@ -704,7 +704,7 @@ async function init(): Promise<GameState> {
   // Pulled-in haze gives the painterly WoW depth — distant trees/hills fade
   // into atmosphere. Colour is overwritten per-frame by the sky to match the
   // horizon; only the near/far falloff matters here.
-  scene.fog = new THREE.Fog(0x9bb6c9, 55, 210);
+  scene.fog = new THREE.Fog(0x9bb6c9, 70, 300);
 
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   if (!renderer.getContext()) {
