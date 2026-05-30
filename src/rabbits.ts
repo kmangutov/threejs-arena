@@ -40,6 +40,19 @@ type RabbitState = 'hop' | 'rest' | 'stopped';
 
 import type { PreyRef, PreyProvider, PreyState } from './prey';
 import { combatContactRange, emitDamageSplat, emitHealSplat, healPreyState, maintainCombatSpacing, makePreyState } from './prey';
+import {
+  ATTACK_DURATION,
+  FLINCH_DURATION,
+  actionPulse,
+  grazeCycle,
+  makeAnimalActionState,
+  makeFurTexture,
+  tickAnimalActions,
+  triggerAttack,
+  triggerFlinch,
+  triggerGraze,
+  type AnimalActionState,
+} from './procedural-animal-visuals';
 
 interface Rabbit {
   parts: RabbitParts;
@@ -53,13 +66,15 @@ interface Rabbit {
   heightData: Uint8Array | null;
   held: boolean;
   prey: PreyState;
+  actions: AnimalActionState;
   id: string;
   name: string;
 }
 
 function buildRabbitMesh(): RabbitParts {
   const palette = PALETTE[Math.floor(Math.random() * PALETTE.length)];
-  const bodyMat = new THREE.MeshStandardMaterial({ color: palette.body, roughness: 0.9, metalness: 0.0 });
+  const fur = makeFurTexture(palette.body, palette.belly, 'mottle');
+  const bodyMat = new THREE.MeshStandardMaterial({ map: fur, roughness: 0.9, metalness: 0.0 });
   const bellyMat = new THREE.MeshStandardMaterial({ color: palette.belly, roughness: 0.9, metalness: 0.0 });
   const eyeMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.5 });
   const noseMat = new THREE.MeshStandardMaterial({ color: 0xff8a9a, roughness: 0.7 });
@@ -211,6 +226,7 @@ export class RabbitWarren implements HoldableProvider, PreyProvider {
       heightData: this.heightData,
       held: false,
       prey: makePreyState(30),
+      actions: makeAnimalActionState(),
       id: `rabbit-${this.rabbits.length + 1}`,
       name: 'Rabbit',
     };
@@ -266,6 +282,7 @@ export class RabbitWarren implements HoldableProvider, PreyProvider {
         if (r.prey.dead) return false;
         r.prey.hp -= amount;
         r.prey.lastHitAt = performance.now();
+        triggerFlinch(r.actions);
         emitDamageSplat(r.parts.group, amount);
         if (attacker?.alive) r.prey.combatTarget = attacker;
         if (r.prey.hp <= 0) {
@@ -349,13 +366,23 @@ export class RabbitWarren implements HoldableProvider, PreyProvider {
         rab.parts.head.position.y = 0.34;
         rab.parts.head.rotation.y = 0;
         rab.parts.tail.position.y = 0.3;
+        rab.actions = makeAnimalActionState();
       }
     };
   }
 
   private updateRabbit(r: Rabbit, delta: number): void {
     const now = performance.now();
+    tickAnimalActions(r.actions, delta);
     this.updateCombat(r, delta);
+    r.parts.group.rotation.z = 0;
+    r.parts.body.rotation.set(0, 0, 0);
+    r.parts.body.position.y = 0.27;
+    r.parts.head.position.y = 0.34;
+    r.parts.head.position.z = 0.28;
+    r.parts.head.rotation.x = 0;
+    r.parts.head.rotation.z = 0;
+    r.parts.tail.position.y = 0.3;
 
     // Flee: if a predator scared us recently, point target directly away
     // and force hop state. Wears off after fleeUntil expires.
@@ -449,13 +476,17 @@ export class RabbitWarren implements HoldableProvider, PreyProvider {
         r.hopPhase = 0;
       }
     } else {
-      // stopped — twitch ears, look around occasionally
+      // Stopped rabbits occasionally lower their heads for a nibbling graze.
       r.stateTimer -= delta;
       const twitchL = Math.sin(now * 0.012) * 0.15;
       const twitchR = Math.sin(now * 0.012 + 1.7) * 0.15;
       r.parts.earL.rotation.z = 0.1 + twitchL;
       r.parts.earR.rotation.z = -0.1 + twitchR;
       r.parts.head.rotation.y = Math.sin(now * 0.0015) * 0.6;
+      if (r.actions.grazeTimer <= 0 && Math.random() < delta * 0.22) triggerGraze(r.actions);
+      const graze = grazeCycle(r.actions.grazeTimer);
+      r.parts.head.rotation.x = graze * 0.34;
+      r.parts.head.position.y -= graze * 0.06;
 
       if (r.stateTimer <= 0) {
         r.parts.head.rotation.y = 0;
@@ -472,9 +503,12 @@ export class RabbitWarren implements HoldableProvider, PreyProvider {
 
     // Settle ears toward neutral when not stopped
     if (r.state !== 'stopped') {
+      r.actions.grazeTimer = 0;
       r.parts.earL.rotation.z += (0.1 - r.parts.earL.rotation.z) * 0.1;
       r.parts.earR.rotation.z += (-0.1 - r.parts.earR.rotation.z) * 0.1;
     }
+
+    this.applyActionPose(r);
 
     // Apply terrain
     const y = resolveAnimalPhysics(r.pos, {
@@ -485,6 +519,15 @@ export class RabbitWarren implements HoldableProvider, PreyProvider {
     });
     r.parts.group.position.set(r.pos.x, y, r.pos.z);
     r.parts.group.rotation.y = r.yaw;
+  }
+
+  private applyActionPose(r: Rabbit): void {
+    const flinch = actionPulse(r.actions.flinchTimer, FLINCH_DURATION);
+    const attack = actionPulse(r.actions.attackTimer, ATTACK_DURATION);
+    r.parts.group.rotation.z = flinch * 0.32;
+    r.parts.body.rotation.x = -attack * 0.22;
+    r.parts.head.rotation.x -= attack * 0.34;
+    r.parts.head.position.z += attack * 0.08;
   }
 
   private updateCombat(r: Rabbit, delta: number): void {
@@ -501,6 +544,7 @@ export class RabbitWarren implements HoldableProvider, PreyProvider {
     maintainCombatSpacing(r.pos, target, attackRange);
     r.yaw = Math.atan2(dx, dz);
     if (r.prey.attackTimer <= 0) {
+      triggerAttack(r.actions);
       target.damage(3, this.makePreyRef(r));
       r.prey.attackTimer = 1.8;
     }

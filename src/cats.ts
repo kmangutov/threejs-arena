@@ -10,6 +10,17 @@ import { Holdable, HoldableProvider } from './holdable';
 import type { PreyRef, PreyProvider, PreyState } from './prey';
 import { combatContactRange, emitDamageSplat, emitHealSplat, healPreyState, maintainCombatSpacing, makePreyState } from './prey';
 import { resolveAnimalPhysics } from './animal-physics';
+import {
+  ATTACK_DURATION,
+  FLINCH_DURATION,
+  actionPulse,
+  makeAnimalActionState,
+  makeFurTexture,
+  tickAnimalActions,
+  triggerAttack,
+  triggerFlinch,
+  type AnimalActionState,
+} from './procedural-animal-visuals';
 
 const WALK_SPEED = 1.4;
 const TURN_RATE = 2.6;
@@ -47,13 +58,15 @@ interface Cat {
   heightData: Uint8Array | null;
   held: boolean;
   prey: PreyState;
+  actions: AnimalActionState;
   id: string;
   name: string;
 }
 
 function buildCatMesh(): CatParts {
   const palette = PALETTE[Math.floor(Math.random() * PALETTE.length)];
-  const bodyMat = new THREE.MeshStandardMaterial({ color: palette.body, roughness: 0.85, metalness: 0.0 });
+  const fur = makeFurTexture(palette.body, palette.belly, 'stripes');
+  const bodyMat = new THREE.MeshStandardMaterial({ map: fur, roughness: 0.85, metalness: 0.0 });
   const bellyMat = new THREE.MeshStandardMaterial({ color: palette.belly, roughness: 0.85, metalness: 0.0 });
   const noseMat = new THREE.MeshStandardMaterial({ color: 0xd07a8a, roughness: 0.6 });
   const eyeMat = new THREE.MeshStandardMaterial({ color: 0x88dd55, roughness: 0.4 });
@@ -214,6 +227,7 @@ export class CatColony implements HoldableProvider, PreyProvider {
       heightData: this.heightData,
       held: false,
       prey: makePreyState(45),
+      actions: makeAnimalActionState(),
       id: `cat-${this.cats.length + 1}`,
       name: 'Cat',
     };
@@ -276,6 +290,7 @@ export class CatColony implements HoldableProvider, PreyProvider {
         if (c.prey.dead) return false;
         c.prey.hp -= amount;
         c.prey.lastHitAt = performance.now();
+        triggerFlinch(c.actions);
         emitDamageSplat(c.parts.group, amount);
         if (attacker?.alive) c.prey.combatTarget = attacker;
         if (c.prey.hp <= 0) {
@@ -345,13 +360,21 @@ export class CatColony implements HoldableProvider, PreyProvider {
         cat.parts.head.rotation.x = 0;
         cat.parts.tail.rotation.y = 0;
         for (const seg of cat.parts.tailSegments) seg.rotation.set(0, 0, 0);
+        cat.actions = makeAnimalActionState();
       }
     };
   }
 
   private updateCat(cat: Cat, delta: number): void {
+    tickAnimalActions(cat.actions, delta);
     this.updateCombat(cat, delta);
     const moving = cat.pauseTimer <= 0;
+    cat.parts.group.rotation.z = 0;
+    cat.parts.body.position.y = 0.48;
+    cat.parts.body.rotation.set(0, 0, 0);
+    cat.parts.head.position.set(0, 0.6, 0.42);
+    cat.parts.head.rotation.x = 0;
+    cat.parts.head.rotation.z = 0;
 
     if (!moving) {
       cat.pauseTimer -= delta;
@@ -364,6 +387,7 @@ export class CatColony implements HoldableProvider, PreyProvider {
       // Slow head turn — curious cat
       cat.parts.head.rotation.y = Math.sin(t * 0.5) * 0.3;
       for (const leg of cat.parts.legs) leg.mesh.rotation.x *= 0.9;
+      this.applyActionPose(cat);
       this.applyTerrain(cat);
       return;
     }
@@ -422,7 +446,17 @@ export class CatColony implements HoldableProvider, PreyProvider {
 
     cat.parts.head.rotation.x = Math.sin(cat.walkPhase) * 0.05;
 
+    this.applyActionPose(cat);
     this.applyTerrain(cat);
+  }
+
+  private applyActionPose(cat: Cat): void {
+    const flinch = actionPulse(cat.actions.flinchTimer, FLINCH_DURATION);
+    const attack = actionPulse(cat.actions.attackTimer, ATTACK_DURATION);
+    cat.parts.group.rotation.z = flinch * 0.24;
+    cat.parts.body.rotation.x = -attack * 0.18;
+    cat.parts.head.rotation.x -= attack * 0.42;
+    cat.parts.head.position.z += attack * 0.13;
   }
 
   private applyTerrain(cat: Cat): void {
@@ -453,7 +487,9 @@ export class CatColony implements HoldableProvider, PreyProvider {
     }
     maintainCombatSpacing(cat.pos, target, attackRange);
     cat.yaw = Math.atan2(dx, dz);
+    cat.pauseTimer = Math.max(cat.pauseTimer, 0.12);
     if (cat.prey.attackTimer <= 0) {
+      triggerAttack(cat.actions);
       target.damage(5, this.makePreyRef(cat));
       cat.prey.attackTimer = 1.4;
     }
