@@ -82,6 +82,90 @@ function place(group, child, x, z, y = 0, yaw = 0, scale = 1) {
   return child;
 }
 
+export function setStructureCollider(group, collider) {
+  group.userData.collider = collider;
+  return group;
+}
+
+export function addStructureCollider(group, collider) {
+  if (!group.userData.colliders) group.userData.colliders = [];
+  group.userData.colliders.push(collider);
+  return group;
+}
+
+export function addWallPlaneCollider(
+  group,
+  {
+    x = 0,
+    z = 0,
+    width,
+    height,
+    thickness = 0.16,
+    rotation = 0,
+  },
+) {
+  return addStructureCollider(group, {
+    type: 'plane',
+    x,
+    z,
+    width,
+    height,
+    thickness,
+    rotation,
+  });
+}
+
+/**
+ * Flatten local structure metadata into the box/cylinder physics shapes used
+ * by the game. Plane metadata stays pleasant to author while compiling to a
+ * thin oriented box, so the runtime physics layer does not need a third path.
+ */
+export function collectStructureColliders(root) {
+  root.updateMatrixWorld(true);
+  const colliders = [];
+  const center = new THREE.Vector3();
+  const scale = new THREE.Vector3();
+  const quaternion = new THREE.Quaternion();
+  const rotation = new THREE.Euler();
+
+  root.traverse(object => {
+    const singular = object.userData.collider;
+    const multiple = object.userData.colliders ?? [];
+    const authored = singular ? [singular, ...multiple] : multiple;
+    if (authored.length === 0) return;
+
+    object.getWorldScale(scale);
+    object.getWorldQuaternion(quaternion);
+    rotation.setFromQuaternion(quaternion, 'YXZ');
+    for (const collider of authored) {
+      center
+        .set(collider.x ?? 0, 0, collider.z ?? 0)
+        .applyMatrix4(object.matrixWorld);
+      if (collider.type === 'cylinder') {
+        colliders.push({
+          type: 'cylinder',
+          x: center.x,
+          z: center.z,
+          radius: collider.radius * Math.max(scale.x, scale.z),
+          height: collider.height * scale.y,
+        });
+        continue;
+      }
+      const depth = collider.type === 'plane' ? collider.thickness : collider.depth;
+      colliders.push({
+        type: 'box',
+        x: center.x,
+        z: center.z,
+        width: collider.width * scale.x,
+        depth: depth * scale.z,
+        height: collider.height * scale.y,
+        rotation: rotation.y + (collider.rotation ?? 0),
+      });
+    }
+  });
+  return colliders;
+}
+
 function addBeam(group, material, x, y, z, sx, sy, sz, rz = 0, ry = 0) {
   return addMesh(group, new THREE.BoxGeometry(sx, sy, sz), material, {
     name: 'TimberBeam',
@@ -330,6 +414,7 @@ export function createFenceSegment({ length = 4, scale = 1, palette: colors = {}
   addBeam(group, wood, 0, 1.08, 0, length, 0.16, 0.16, -0.08);
   addBeam(group, wood, -length * 0.25, 0.86, 0, length * 0.52, 0.12, 0.12, -0.38);
   addBeam(group, wood, length * 0.25, 0.86, 0, length * 0.52, 0.12, 0.12, 0.38);
+  addWallPlaneCollider(group, { width: length, height: 1.55, thickness: 0.18 });
   group.scale.setScalar(scale);
   return group;
 }
@@ -470,6 +555,7 @@ export function createWell({ scale = 1, palette: colors = {} } = {}) {
     position: [1.1, 2.0, 0],
     rotation: [0, 0, Math.PI / 2],
   });
+  setStructureCollider(group, { type: 'cylinder', radius: 1.2, height: 0.98 });
   group.scale.setScalar(scale);
   return group;
 }
@@ -522,6 +608,7 @@ export function createFountain({ scale = 1, palette: colors = {} } = {}) {
       rotation: [Math.cos(a) * 0.72, 0, -Math.sin(a) * 0.72],
     });
   }
+  setStructureCollider(group, { type: 'cylinder', radius: 2.42, height: 0.82 });
   group.scale.setScalar(scale);
   return group;
 }
@@ -566,6 +653,7 @@ export function createNoticeBoard({ scale = 1, palette: colors = {} } = {}) {
     position: [0, 2.54, 0],
     rotation: [0.08, 0, 0],
   });
+  addWallPlaneCollider(group, { width: 2.48, height: 2.42, thickness: 0.18 });
   group.scale.setScalar(scale);
   return group;
 }
@@ -707,7 +795,7 @@ export function createRoundHut({ seed = 1, scale = 1, palette: colors = {} } = {
   if (rng() < 0.52) {
     place(group, createBarrel({ scale: 0.72, palette: p }), -1.48, 1.52, 0, 0.2);
   }
-  group.userData.collider = { type: 'cylinder', radius: 1.85, height: 2.35 };
+  setStructureCollider(group, { type: 'cylinder', radius: 1.85, height: 2.35 });
   group.scale.setScalar(scale);
   return group;
 }
@@ -768,7 +856,7 @@ export function createLonghouse({ seed = 1, scale = 1, palette: colors = {} } = 
   if (rng() < 0.75) {
     place(group, createCrate({ scale: 0.72, palette: p }), 1.7, 1.75, 0, 0.12);
   }
-  group.userData.collider = { type: 'box', width: 4.7, depth: 2.9, height: 2.3 };
+  setStructureCollider(group, { type: 'box', width: 4.7, depth: 2.9, height: 2.3 });
   group.scale.setScalar(scale);
   return group;
 }
@@ -839,7 +927,7 @@ export function createTimberHouse({ seed = 1, scale = 1, palette: colors = {} } 
   if (rng() < 0.58) {
     place(group, createBarrel({ scale: 0.68, palette: p }), 2.35, 2.18, 0, 0.2);
   }
-  group.userData.collider = { type: 'box', width: 5.4, depth: 4.2, height: 4.0 };
+  setStructureCollider(group, { type: 'box', width: 5.4, depth: 4.2, height: 4.0 });
   group.scale.setScalar(scale);
   return group;
 }
@@ -930,7 +1018,7 @@ export function createInn({ seed = 1, scale = 1, palette: colors = {} } = {}) {
   if (rng() < 0.78) {
     place(group, createBarrel({ scale: 0.78, palette: p }), -3.34, 2.62, 0, 0.12);
   }
-  group.userData.collider = { type: 'box', width: 7.6, depth: 5.25, height: 5.1 };
+  setStructureCollider(group, { type: 'box', width: 7.6, depth: 5.25, height: 5.1 });
   group.scale.setScalar(scale);
   return group;
 }
@@ -1011,7 +1099,7 @@ export function createChapel({ scale = 1, palette: colors = {} } = {}) {
   addWindow(group, p, 0, 5.02, 4.88, 0, 0.56, 1.12);
   place(group, createBanner({ color: p.clothBlue, scale: 0.72, palette: p }), -1.62, 4.76, 3.92);
   place(group, createBanner({ color: p.clothRed, scale: 0.72, palette: p }), 1.62, 4.76, 3.92);
-  group.userData.collider = { type: 'box', width: 6.15, depth: 8.5, height: 5.0 };
+  setStructureCollider(group, { type: 'box', width: 6.15, depth: 8.5, height: 5.0 });
   group.scale.setScalar(scale);
   return group;
 }
@@ -1165,7 +1253,7 @@ export function createBlacksmith({ seed = 1, scale = 1, palette: colors = {} } =
   if (rng() < 0.75) {
     place(group, createBarrel({ scale: 0.68, palette: p }), 4.34, -1.0, 0, 0.12);
   }
-  group.userData.collider = { type: 'box', width: 5.8, depth: 4.2, height: 3.1 };
+  setStructureCollider(group, { type: 'box', width: 5.8, depth: 4.2, height: 3.1 });
   group.scale.setScalar(scale);
   return group;
 }
@@ -1217,7 +1305,10 @@ export function createStable({ scale = 1, palette: colors = {} } = {}) {
   place(group, createHayBale({ scale: 0.82, palette: p }), -2.62, -1.34, 0, 0.08);
   place(group, createHayBale({ scale: 0.68, palette: p }), -1.56, -1.32, 0, -0.12);
   place(group, createLanternPost({ scale: 0.6, palette: p }), 3.16, 1.82, 0, 0.04);
-  group.userData.collider = { type: 'box', width: 7.5, depth: 4.7, height: 3.2 };
+  addWallPlaneCollider(group, { z: -2.12, width: 7.08, height: 2.72, thickness: 0.32 });
+  for (const x of [-3.45, -1.15, 1.15, 3.45]) {
+    addWallPlaneCollider(group, { x, z: 0.12, width: 4.2, height: 2.42, thickness: 0.14, rotation: Math.PI / 2 });
+  }
   group.scale.setScalar(scale);
   return group;
 }
@@ -1260,6 +1351,7 @@ export function createMarketStall({ color, scale = 1, palette: colors = {} } = {
   }
   place(group, createCrate({ scale: 0.66, palette: p }), -1.05, 0.95, 0);
   place(group, createBarrel({ scale: 0.65, palette: p }), 1.1, 0.98, 0);
+  setStructureCollider(group, { type: 'box', width: 3.0, depth: 1.45, height: 1.0 });
   group.scale.setScalar(scale);
   return group;
 }
@@ -1383,7 +1475,7 @@ export function createWatchtower({ scale = 1, palette: colors = {} } = {}) {
   addWindow(group, p, 1.58, 2.05, 0, Math.PI / 2, 0.36, 0.82);
   place(group, createBanner({ color: p.clothRed, scale: 0.74, palette: p }), 0, 0, 5.0);
   addBeam(group, wood, 0, 4.7, 0, 3.3, 0.12, 0.12);
-  group.userData.collider = { type: 'cylinder', radius: 1.8, height: 4.7 };
+  setStructureCollider(group, { type: 'cylinder', radius: 1.8, height: 4.7 });
   group.scale.setScalar(scale);
   return group;
 }
@@ -1413,6 +1505,9 @@ export function createVillageGate({ scale = 1, palette: colors = {} } = {}) {
   }
   place(group, createBanner({ color: p.clothRed, scale: 0.62, palette: p }), -2.15, 0.05, 2.9);
   place(group, createBanner({ color: p.clothBlue, scale: 0.62, palette: p }), 2.15, 0.05, 2.9);
+  for (const x of [-2.15, 2.15]) {
+    addStructureCollider(group, { type: 'cylinder', x, radius: 0.42, height: 4.8 });
+  }
   group.scale.setScalar(scale);
   return group;
 }
@@ -1459,7 +1554,7 @@ export function createFortifiedWall({ length = 9, scale = 1, palette: colors = {
   addBeam(group, wood, 0, 1.28, 0.76, length * 0.72, 0.16, 0.12);
   place(group, createBanner({ color: p.clothRed, scale: 0.64, palette: p }), -length * 0.28, 0.82, 2.04);
   place(group, createBanner({ color: p.clothBlue, scale: 0.64, palette: p }), length * 0.28, 0.82, 2.04);
-  group.userData.collider = { type: 'box', width: length + 0.7, depth: 1.72, height: 3.35 };
+  addWallPlaneCollider(group, { width: length + 0.7, height: 3.35, thickness: 1.72 });
   group.scale.setScalar(scale);
   return group;
 }
@@ -1517,7 +1612,7 @@ export function createCastleKeep({ scale = 1, palette: colors = {} } = {}) {
   place(group, createBanner({ color: p.clothRed, scale: 0.85, palette: p }), 0, 3.1, 5.15);
   place(group, createBanner({ color: p.clothBlue, scale: 0.7, palette: p }), -1.25, 1.34, 7.05);
   place(group, createBanner({ color: p.clothRed, scale: 0.7, palette: p }), 1.25, 1.34, 7.05);
-  group.userData.collider = { type: 'box', width: 6.9, depth: 6.0, height: 5.4 };
+  setStructureCollider(group, { type: 'box', width: 6.9, depth: 6.0, height: 5.4 });
   group.scale.setScalar(scale);
   return group;
 }
