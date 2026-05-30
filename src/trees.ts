@@ -6,6 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { getTerrainHeight } from './terrain';
+import { REGION_FOOTPRINTS } from './regions';
 
 const BASE = (import.meta as any).env?.BASE_URL ?? '/';
 const TREE_GLB_URL = `${BASE}trees/tree.glb`;
@@ -250,12 +251,17 @@ export function createForest(terrainHeightData: Uint8Array | null): THREE.Group 
   const treeCount = 90;
 
   const placements: Array<{ x: number; z: number; y: number; scale: number; rotY: number }> = [];
-  for (let i = 0; i < treeCount; i++) {
+  let guard = 0;
+  while (placements.length < treeCount && guard++ < treeCount * 8) {
     const angle = Math.random() * Math.PI * 2;
     // Bias toward the nearer ring (sqrt) but allow distant stragglers.
     const dist = minDist + Math.sqrt(Math.random()) * (maxDist - minDist);
     const x = Math.cos(angle) * dist;
     const z = Math.sin(angle) * dist;
+
+    // Keep clearings around the themed regions so towns/farms/swamps aren't
+    // buried under forest.
+    if (REGION_FOOTPRINTS.some(f => Math.hypot(x - f.x, z - f.z) < f.r)) continue;
 
     placements.push({
       x,

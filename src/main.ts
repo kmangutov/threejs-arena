@@ -15,7 +15,8 @@
 
 import * as THREE from 'three';
 import { createAxisGizmo } from './coords';
-import { createArena, getColliders, getTerrainHeightData } from './arena';
+import { createArena, getColliders, getTerrainHeightData, Collider } from './arena';
+import { createRegions } from './regions';
 import { CameraRig } from './camera';
 import { PlayerController } from './player';
 import { TargetingSystem } from './targeting';
@@ -743,6 +744,12 @@ async function init(): Promise<GameState> {
   const rivers = new Rivers((x, z) => getTerrainHeight(x, z, terrainData));
   scene.add(rivers);
 
+  // Themed regions — town, farmland, swamp — placed out across the world so
+  // exploring turns up distinct WoW-style locales. Solid structures expose
+  // world-space colliders gathered into the player's collision set.
+  const regions = createRegions((x, z) => getTerrainHeight(x, z, terrainData));
+  scene.add(regions);
+
   // A single procedural tree placed on the map as a tweakable showcase —
   // pickable in the SceneEditor with full param schema (seed, trunk height,
   // canopy scale, leaf puff, bend).
@@ -801,7 +808,11 @@ async function init(): Promise<GameState> {
   player.mesh = playerView.root;
   // Combine static arena colliders with the ecosystem's dynamic ones (huts +
   // sizeable rocks). Re-applied whenever the ecosystem regenerates.
-  const allColliders = () => [...getColliders(), ...ecosystem.getColliders()];
+  const allColliders = () => [
+    ...getColliders(),
+    ...ecosystem.getColliders(),
+    ...((regions.userData.colliders as Collider[]) ?? []),
+  ];
   let liveState: GameState | null = null;
   const refreshColliders = () => {
     const colliders = allColliders();
