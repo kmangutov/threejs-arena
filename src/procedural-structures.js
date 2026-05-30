@@ -178,6 +178,14 @@ export function createCrate({ scale = 1, palette: colors = {} } = {}) {
   addBeam(group, dark, 0.415, 0.4, 0, 0.04, 0.82, 0.12);
   addBeam(group, dark, -0.415, 0.4, 0, 0.04, 0.82, 0.12);
   addBeam(group, dark, 0, 0.4, 0.42, 0.1, 1.05, 0.05, -0.72);
+  addBeam(group, dark, 0, 0.4, 0.425, 0.1, 1.05, 0.05, 0.72);
+  addBeam(group, dark, 0.42, 0.4, 0, 0.1, 1.05, 0.05, -0.72, Math.PI / 2);
+  for (const y of [0.07, 0.73]) {
+    addMesh(group, new THREE.BoxGeometry(0.92, 0.1, 0.92), dark, {
+      name: 'CrateRim',
+      position: [0, y, 0],
+    });
+  }
   group.scale.setScalar(scale);
   return group;
 }
@@ -195,6 +203,15 @@ export function createBarrel({ scale = 1, palette: colors = {} } = {}) {
       rotation: [Math.PI / 2, 0, 0],
     });
   }
+  addMesh(group, new THREE.CylinderGeometry(0.37, 0.37, 0.055, 10), mat(p.thatchLight), {
+    name: 'BarrelLid',
+    position: [0, 0.96, 0],
+  });
+  addMesh(group, new THREE.CylinderGeometry(0.045, 0.055, 0.24, 6), mat(p.iron), {
+    name: 'BarrelTap',
+    position: [0, 0.48, 0.5],
+    rotation: [Math.PI / 2, 0, 0],
+  });
   group.scale.setScalar(scale);
   return group;
 }
@@ -240,6 +257,21 @@ export function createBanner({ color, scale = 1, palette: colors = {} } = {}) {
   });
   addMesh(group, new THREE.BoxGeometry(0.95, 1.35, 0.06), mat(cloth), {
     position: [0.5, 2.25, 0],
+  });
+  addBeam(group, mat(p.iron), 0.48, 2.94, 0, 1.12, 0.07, 0.07);
+  addMesh(group, new THREE.BoxGeometry(0.11, 1.28, 0.075), mat(p.clothGold), {
+    name: 'BannerTrim',
+    position: [0.08, 2.24, 0.05],
+  });
+  addMesh(group, new THREE.BoxGeometry(0.66, 0.12, 0.075), mat(p.clothGold), {
+    name: 'BannerMark',
+    position: [0.54, 2.36, 0.05],
+    rotation: [0, 0, -0.48],
+  });
+  addMesh(group, new THREE.BoxGeometry(0.66, 0.12, 0.075), mat(p.clothGold), {
+    name: 'BannerMark',
+    position: [0.54, 2.36, 0.05],
+    rotation: [0, 0, 0.48],
   });
   addMesh(group, new THREE.ConeGeometry(0.14, 0.35, 4), mat(p.clothGold), {
     position: [0, 3.25, 0],
@@ -295,6 +327,59 @@ export function createFenceSegment({ length = 4, scale = 1, palette: colors = {}
   }
   addBeam(group, wood, 0, 0.62, 0, length, 0.16, 0.16, 0.08);
   addBeam(group, wood, 0, 1.08, 0, length, 0.16, 0.16, -0.08);
+  addBeam(group, wood, -length * 0.25, 0.86, 0, length * 0.52, 0.12, 0.12, -0.38);
+  addBeam(group, wood, length * 0.25, 0.86, 0, length * 0.52, 0.12, 0.12, 0.38);
+  group.scale.setScalar(scale);
+  return group;
+}
+
+export function createSackPile({ scale = 1, palette: colors = {} } = {}) {
+  const p = palette(colors);
+  const group = new THREE.Group();
+  group.name = 'SackPile';
+  const sack = mat(p.plaster);
+  const tie = mat(p.timberDark);
+  for (const [x, y, z, s] of [
+    [-0.42, 0.38, 0, 1],
+    [0.38, 0.32, 0.1, 0.84],
+    [0.02, 0.78, -0.06, 0.78],
+  ]) {
+    addMesh(group, new THREE.SphereGeometry(0.48, 7, 5), sack, {
+      name: 'Sack',
+      position: [x, y, z],
+      scale: [s * 0.82, s, s * 0.68],
+    });
+    addMesh(group, new THREE.TorusGeometry(0.14 * s, 0.035, 4, 7), tie, {
+      name: 'SackTie',
+      position: [x, y + s * 0.5, z],
+      rotation: [Math.PI / 2, 0, 0],
+    });
+  }
+  group.scale.setScalar(scale);
+  return group;
+}
+
+export function createWoodpile({ scale = 1, palette: colors = {} } = {}) {
+  const p = palette(colors);
+  const group = new THREE.Group();
+  group.name = 'Woodpile';
+  const bark = mat(p.timberDark);
+  const cut = mat(p.thatchLight);
+  for (const [x, y, z] of [
+    [-0.52, 0.2, 0], [0, 0.2, 0], [0.52, 0.2, 0],
+    [-0.28, 0.56, 0], [0.28, 0.56, 0],
+  ]) {
+    addMesh(group, new THREE.CylinderGeometry(0.18, 0.2, 1.18, 7), bark, {
+      name: 'FirewoodLog',
+      position: [x, y, z],
+      rotation: [Math.PI / 2, 0, 0],
+    });
+    addMesh(group, new THREE.CylinderGeometry(0.15, 0.15, 0.02, 7), cut, {
+      name: 'LogEnd',
+      position: [x, y, 0.6],
+      rotation: [Math.PI / 2, 0, 0],
+    });
+  }
   group.scale.setScalar(scale);
   return group;
 }
@@ -393,12 +478,11 @@ export function createRockFormation({ seed = 1, count = 5, scale = 1, palette: c
   const rng = makeRng(seed);
   const group = new THREE.Group();
   group.name = 'RockFormation';
-  const stone = mat(p.stoneDark);
   for (let i = 0; i < count; i++) {
     const a = rng() * Math.PI * 2;
     const r = i === 0 ? 0 : 0.55 + rng() * 1.15;
     const size = i === 0 ? 1.55 : 0.45 + rng() * 0.85;
-    addMesh(group, new THREE.DodecahedronGeometry(0.72, 0), stone, {
+    addMesh(group, new THREE.DodecahedronGeometry(0.72, 0), mat(i % 3 === 0 ? p.stone : p.stoneDark), {
       name: 'Boulder',
       position: [Math.cos(a) * r, size * 0.43, Math.sin(a) * r],
       rotation: [rng() * 0.35, rng() * Math.PI * 2, rng() * 0.35],
@@ -1042,6 +1126,8 @@ export function createVillageCluster({ seed = 1, fortified = false, scale = 1, p
   place(group, createHandcart({ scale: 0.58, palette: p }), 3.2, -4.5, 0, -0.35);
   place(group, createLanternPost({ scale: 0.74, palette: p }), 1.7, 1.35, 0, 0.18);
   place(group, createWeaponRack({ scale: 0.66, palette: p }), 7.75, 2.25, 0, -0.72);
+  place(group, createSackPile({ scale: 0.68, palette: p }), 4.88, 2.5, 0, -0.1);
+  place(group, createWoodpile({ scale: 0.72, palette: p }), 7.85, 6.22, 0, -0.72);
   place(group, createBanner({ color: p.clothRed, scale: 0.66, palette: p }), -4.9, -0.35);
   if (fortified) {
     place(group, createVillageGate({ scale: 0.72, palette: p }), 0.2, -7.0, 0, 0);
@@ -1071,6 +1157,8 @@ export function createStructureGallery({ palette: colors = {} } = {}) {
   place(group, createHandcart({ scale: 0.68, palette: p }), 12.6, 4.3, 0, 0.18);
   place(group, createLanternPost({ scale: 0.76, palette: p }), 15.2, 4.2, 0, -0.15);
   place(group, createWeaponRack({ scale: 0.68, palette: p }), 17.0, 4.3, 0, 0.12);
+  place(group, createSackPile({ scale: 0.68, palette: p }), 18.4, 4.35, 0, -0.12);
+  place(group, createWoodpile({ scale: 0.72, palette: p }), 19.7, 4.35, 0, 0.08);
   place(group, createCrate({ scale: 0.9, palette: p }), 12.4, 5.0);
   place(group, createBarrel({ scale: 0.86, palette: p }), 13.8, 5.1);
   place(group, createSignpost({ scale: 0.96, palette: p }), 15.2, 3.6, 0, 0.2);
@@ -1092,6 +1180,8 @@ export const PROCEDURAL_ASSETS = [
   { id: 'anvil', label: 'Anvil', category: 'Village Props', create: createAnvil },
   { id: 'lantern-post', label: 'Lantern Post', category: 'Village Props', create: createLanternPost },
   { id: 'weapon-rack', label: 'Weapon Rack', category: 'Village Props', create: createWeaponRack },
+  { id: 'sack-pile', label: 'Sack Pile', category: 'Village Props', create: createSackPile },
+  { id: 'woodpile', label: 'Woodpile', category: 'Village Props', create: createWoodpile },
   { id: 'signpost', label: 'Signpost', category: 'Village Props', create: createSignpost },
   { id: 'banner', label: 'Banner', category: 'Village Props', create: createBanner },
   { id: 'fence-segment', label: 'Fence Segment', category: 'Village Props', create: createFenceSegment },

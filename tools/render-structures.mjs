@@ -77,13 +77,13 @@ function renderAngle(createSubject, angle) {
   const dimensions = bounds.getSize(new THREE.Vector3());
   const radius = Math.max(dimensions.length() * 0.54, 1.8);
   const direction = new THREE.Vector3(...angle.direction).normalize();
-  camera.position.copy(target).addScaledVector(direction, Math.max(radius * 2.75, 14));
+  camera.position.copy(target).addScaledVector(direction, Math.max(radius * 2.75, 7));
   camera.lookAt(target);
   camera.updateProjectionMatrix();
   camera.updateMatrixWorld(true);
 
   const ground = new THREE.Mesh(
-    new THREE.CircleGeometry(Math.max(10, radius * 1.65), 48),
+    new THREE.CircleGeometry(Math.max(6, radius * 1.65), 48),
     new THREE.MeshLambertMaterial({ color: 0x769149 }),
   );
   ground.name = 'Ground';
